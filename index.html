@@ -370,6 +370,11 @@ async function delPred(id){ if(!confirm("Delete this entry?"))return; try{await 
 
 /* ---------- FIXTURES ---------- */
 let showAddNews=false, mwSel=null;
+function restDays(team,kick){
+  if(!kick)return null;
+  const prev=DB.plf.filter(f=>(f.team_h_name===team||f.team_a_name===team)&&f.kickoff&&f.started&&new Date(f.kickoff)<new Date(kick)).sort((a,b)=>new Date(b.kickoff)-new Date(a.kickoff))[0];
+  return prev?Math.round((new Date(kick)-new Date(prev.kickoff))/864e5):null;
+}
 function vMatchweek(){
   if(!DB.plf.length) return "";
   const s=DB.plstate||{};
@@ -378,15 +383,17 @@ function vMatchweek(){
   const predByFx = Object.fromEntries(DB.predictions.filter(p=>p.fixture_id).map(p=>[p.fixture_id,p]));
   return `<div class="panel"><div class="flex"><h2>Premier League — Matchweek</h2>
     <select class="right" onchange="mwSel=+this.value;render()">${Array.from({length:38},(_,i)=>i+1).map(n=>`<option value="${n}" ${n===mw?"selected":""}>MW ${n}${n===s.current_gw?" · current":""}</option>`).join("")}</select></div>
-  <table><tr><th>Kickoff</th><th>Match</th><th>Score</th><th>Status</th><th>Prediction</th></tr>
+  <table><tr><th>Kickoff</th><th>Match</th><th>Score</th><th>Status</th><th>Rest</th><th>Prediction</th></tr>
   ${fs.map(f=>{
     const p=predByFx[f.id];
+    const rh=f.finished?null:restDays(f.team_h_name,f.kickoff), ra=f.finished?null:restDays(f.team_a_name,f.kickoff);
+    const restCell=f.finished?'<span class="muted small">—</span>':((rh!=null?`<span class="${rh<=3?'neg':'muted'} small">H ${rh}d${rh<=3?' ⚠':''}</span>`:'')+(ra!=null?` <span class="${ra<=3?'neg':'muted'} small">A ${ra}d${ra<=3?' ⚠':''}</span>`:'')||'<span class="muted small">—</span>');
     const status = f.finished?'<span class="tag hit">FT</span>':f.started?'<span class="tag miss">● LIVE</span>':'<span class="tag pend">UPCOMING</span>';
     const predCell = p
       ? `<span class="rowbtn" style="cursor:pointer" onclick="expandId=${p.id};go('predictions')">${p.is_avoid?'<span class="tag avoid">AVOID</span>':`<b>${esc(p.pick||"—")}</b> ${p.final_prob!=null?p.final_prob+"%":""} <span class="stars">${starstr(p.stars)}</span>`} ${p.outcome?outcomeTag(p.outcome):(f.finished?'<span class="tag hit">settle →</span>':'')}</span>`
       : (f.finished?'<span class="muted small">—</span>':`<button class="btn ghost sm" onclick="predictFixture(${f.id})">+ Predict</button>`);
     return `<tr><td class="num small">${f.kickoff?new Date(f.kickoff).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}):"TBD"}</td>
-    <td><b>${esc(fxLabel(f))}</b></td><td class="num">${fxScore(f)||"—"}</td><td>${status}</td><td>${predCell}</td></tr>`}).join("")}
+    <td><b>${esc(fxLabel(f))}</b></td><td class="num">${fxScore(f)||"—"}</td><td>${status}</td><td>${restCell}</td><td>${predCell}</td></tr>`}).join("")}
   </table>${fs.length?"":'<p class="muted" style="padding:10px">No fixtures scheduled for this matchweek yet.</p>'}</div>`;
 }
 let PREFILL=null;
@@ -429,8 +436,9 @@ async function delNews(id){try{await api("news_items?id=eq."+id,{method:"DELETE"
 
 /* ---------- PL TABLE + TEAM PROFILES ---------- */
 let plSeason=null, profileTeam=null, HIST=null, PROFILES={};
+let h2hOpp=null, h2hVenue="home", CALCPRE=null;
 const SEASON_LIVE = () => { const st=DB.plstate; return (st && !st.season_over && st.current_gw!=null) ? st.season : null; };
-async function ensureHist(){ if(!HIST) HIST = await api("pl_history?select=season,match_date,home,away,fthg,ftag,hthg,htag&order=match_date.asc&limit=4000"); }
+async function ensureHist(){ if(!HIST) HIST = await api("pl_history?select=season,match_date,home,away,fthg,ftag,hthg,htag,referee,hy,ay,hr,ar,b365h,b365d,b365a&order=match_date.asc&limit=4000"); }
 async function ensureProfiles(team){ if(!PROFILES[team]) PROFILES[team] = await api("team_profiles?team=eq."+encodeURIComponent(team)+"&order=season.asc"); }
 function seasonList(){
   const set=new Set(HIST?HIST.map(m=>m.season):[]);
@@ -488,7 +496,9 @@ function vTable(){
     <td>${formBadges(r.form)}</td></tr>`).join("")}
   </table>`:'<p class="muted" style="padding:10px">No results yet for this season.</p>'}
   </div>
-  <div class="panel"><p class="small muted">Click any team for its profile: multi-season record, scoring patterns, goal timing, vulnerability windows, formations, and playing style.</p></div>`;
+  <div class="panel"><p class="small muted">Click any team for its profile: multi-season record, scoring patterns, goal timing, vulnerability windows, formations, and playing style.</p></div>
+  ${refPanel()}
+  ${marketPanel()}`;
 }
 /* --- profile charts --- */
 function timingChart(t){
@@ -553,6 +563,93 @@ function formationRows(st){
   return arr.sort((a,b)=>(+b.time||0)-(+a.time||0)).slice(0,5).map(x=>
     `<tr><td class="num"><b>${esc(x.stat)}</b></td><td class="num">${Math.round((+x.time||0)/tot*100)}% of minutes</td><td class="num">${x.goals??"—"} scored / ${x.against?.goals??"—"} conceded</td><td class="num">${x.xG?(+x.xG).toFixed(1):"—"} xG</td></tr>`).join("");
 }
+async function setH2H(opp){ h2hOpp=opp||null; if(h2hOpp){try{await ensureProfiles(h2hOpp);}catch(e){}} renderPLTable(); }
+function setH2HVenue(v){ h2hVenue=v; renderPLTable(); }
+function sendToCalc(b){ CALCPRE=b; go("calculator"); toast("Base "+b+"% loaded into calculator"); }
+function baseSuggest(team,opp,homeVenue){
+  const tb=tableFrom(matchesFor(plSeason));
+  const tr=tb.find(r=>r.team===team), orr=tb.find(r=>r.team===opp);
+  if(!tr||!orr||tr.p<5||orr.p<5)return null;
+  const ppg=(w,d2,n)=>n?(3*w+d2)/n:1.3;
+  const A=homeVenue?ppg(tr.hw,tr.hd,tr.hw+tr.hd+tr.hl):ppg(tr.aw,tr.ad,tr.aw+tr.ad+tr.al);
+  const B=homeVenue?ppg(orr.aw,orr.ad,orr.aw+orr.ad+orr.al):ppg(orr.hw,orr.hd,orr.hw+orr.hd+orr.hl);
+  const share=(A+B)>0?A/(A+B):0.5;
+  let base=share*75;
+  const gdadj=Math.max(-6,Math.min(6,((tr.gf-tr.ga)/tr.p-(orr.gf-orr.ga)/orr.p)*3));
+  base+=gdadj;
+  const ms=seasonList().flatMap(s2=>matchesFor(s2)).filter(m=>(m.home===team&&m.away===opp)||(m.home===opp&&m.away===team)).filter(m=>m.fthg!=null).sort((a,b)=>String(b.match_date).localeCompare(String(a.match_date))).slice(0,5);
+  let net=0; for(const m of ms){const gf=m.home===team?m.fthg:m.ftag, ga=m.home===team?m.ftag:m.fthg; net+=gf>ga?1:gf<ga?-1:0;}
+  const h2hadj=Math.max(-5,Math.min(5,net*1.5));
+  base+=h2hadj;
+  base=Math.round(Math.max(20,Math.min(80,base)));
+  return {base,parts:[
+    "venue PPG "+A.toFixed(2)+" vs "+B.toFixed(2)+" → "+Math.round(share*75)+"%",
+    "GD/game "+(gdadj>=0?"+":"")+gdadj.toFixed(1)+"%",
+    "H2H lean "+(h2hadj>=0?"+":"")+h2hadj.toFixed(1)+"% (net "+net+" of last "+ms.length+")",
+    "25% draw baseline reserved"]};
+}
+function h2hPanel(team){
+  const all=[...new Set((HIST||[]).flatMap(m=>[m.home,m.away]))].filter(t2=>t2!==team).sort();
+  const opts='<option value="">— pick opponent —</option>'+all.map(o=>`<option ${o===h2hOpp?"selected":""}>${esc(o)}</option>`).join("");
+  let body="";
+  if(h2hOpp){
+    const ms=seasonList().flatMap(s2=>matchesFor(s2)).filter(m=>(m.home===team&&m.away===h2hOpp)||(m.home===h2hOpp&&m.away===team)).filter(m=>m.fthg!=null).sort((a,b)=>String(b.match_date).localeCompare(String(a.match_date)));
+    let w=0,d=0,l=0;
+    for(const m of ms){const gf=m.home===team?m.fthg:m.ftag, ga=m.home===team?m.ftag:m.fthg; if(gf>ga)w++;else if(gf<ga)l++;else d++;}
+    const rowsH=ms.slice(0,8).map(m=>{const gf=m.home===team?m.fthg:m.ftag, ga=m.home===team?m.ftag:m.fthg;
+      return `<tr><td class="num small">${m.match_date||""} <span class="muted">${m.season}</span></td><td>${esc(m.home)} <b class="num">${m.fthg}-${m.ftag}</b> ${esc(m.away)}</td><td>${gf>ga?'<span class="tag hit">W</span>':gf<ga?'<span class="tag miss">L</span>':'<span class="tag pend">D</span>'}</td></tr>`}).join("");
+    const sug=baseSuggest(team,h2hOpp,h2hVenue==="home");
+    const pa=(PROFILES[team]||[]).find(p=>p.season===plSeason), pb=(PROFILES[h2hOpp]||[]).find(p=>p.season===plSeason);
+    let collide="";
+    if(pa&&pb&&pa.stats.timing&&pb.stats.timing){
+      const bands=["1-15","16-30","31-45","46-60","61-75","76+"];
+      const myBest=bands.reduce((a,b)=>((pa.stats.timing[b]||{}).goals||0)>((pa.stats.timing[a]||{}).goals||0)?b:a);
+      const oppWorst=bands.reduce((a,b)=>(((pb.stats.timing[b]||{}).against||{}).goals||0)>(((pb.stats.timing[a]||{}).against||{}).goals||0)?b:a);
+      collide=`<p class="small" style="margin-top:8px"><b class="muted">SCORING WINDOW:</b> ${esc(team)} scores most in <b class="pos">${myBest}'</b> · ${esc(h2hOpp)} concedes most in <b class="neg">${oppWorst}'</b>${myBest===oppWorst?' — <b style="color:var(--accent)">ALIGNED ✓</b>':''}</p>
+      <p class="small" style="margin-top:4px"><b class="muted">STYLES:</b> ${styleChips(pa.stats)||'—'} <span class="muted">vs</span> ${styleChips(pb.stats)||'—'}</p>`;
+    }
+    body=`<p style="margin:8px 0"><b>H2H (${ms.length} meetings, 5 seasons):</b> <span class="pos num">${w}W</span> <span class="num muted">${d}D</span> <span class="neg num">${l}L</span> <span class="muted small">from ${esc(team)}'s side</span></p>
+    <table>${rowsH}</table>
+    ${collide}
+    <div class="detail" style="margin-top:10px">
+      <div class="flex"><b>Suggested BASE probability — ${esc(team)} to win</b>
+      <select class="right" onchange="setH2HVenue(this.value)"><option value="home" ${h2hVenue==="home"?"selected":""}>${esc(team)} at home</option><option value="away" ${h2hVenue==="away"?"selected":""}>${esc(team)} away</option></select></div>
+      ${sug?`<div class="num" style="font-size:30px;font-weight:800;color:var(--accent);margin:6px 0">${sug.base}%</div>
+      <p class="small muted">${sug.parts.join(" · ")}</p>
+      <div class="flex" style="margin-top:8px"><button class="btn sm" onclick="sendToCalc(${sug.base})">Send to Calculator →</button></div>
+      <p class="small muted" style="margin-top:6px">BASE layer only — PRS / AIS / TMS / context still apply on top.</p>`:'<p class="muted small">Not enough data in the selected season for both teams.</p>'}
+    </div>`;
+  }
+  return `<div class="panel"><div class="flex"><h2>Head-to-Head & Matchup</h2><select class="right" onchange="setH2H(this.value)">${opts}</select></div>${body||'<p class="muted small">Pick an opponent: H2H record, style collision, scoring-window alignment, and a data-grounded base probability for the pipeline.</p>'}</div>`;
+}
+function refPanel(){
+  const agg={};
+  for(const m of (HIST||[])){ if(!m.referee||m.fthg==null)continue; const r=agg[m.referee]||(agg[m.referee]={n:0,y:0,red:0,hw:0}); r.n++; r.y+=(m.hy||0)+(m.ay||0); r.red+=(m.hr||0)+(m.ar||0); if(m.fthg>m.ftag)r.hw++; }
+  const rows=Object.entries(agg).map(([ref,v])=>({ref,...v})).filter(r=>r.n>=25).sort((a,b)=>(b.y/b.n)-(a.y/a.n));
+  if(!rows.length)return "";
+  return `<div class="panel"><details><summary style="cursor:pointer"><b style="color:var(--accent)">REFEREE TENDENCIES</b> <span class="muted small">· 5 seasons · min 25 matches · click to expand</span></summary>
+  <table style="margin-top:10px"><tr><th>Referee</th><th>Matches</th><th>Yellows/gm</th><th>Reds</th><th>Home win %</th></tr>
+  ${rows.map(r=>`<tr><td>${esc(r.ref)}</td><td class="num">${r.n}</td><td class="num" style="color:${r.y/r.n>4.2?"var(--red)":r.y/r.n<3.2?"var(--green)":"var(--text)"}">${(r.y/r.n).toFixed(2)}</td><td class="num">${r.red}</td><td class="num">${Math.round(r.hw/r.n*100)}%</td></tr>`).join("")}</table>
+  <p class="small muted" style="margin-top:8px">Card-happy refs raise red-card tail risk — a red flips game scripts (see Mexico-England, Audit 3). Feed as a context-layer input, not a standalone edge.</p></details></div>`;
+}
+function marketPanel(){
+  const rows=(HIST||[]).filter(m=>m.b365h&&m.b365d&&m.b365a&&m.fthg!=null);
+  if(rows.length<100)return "";
+  const bands=[[0.40,0.50],[0.50,0.60],[0.60,0.70],[0.70,0.80],[0.80,1.01]].map(([lo,hi])=>({lo,hi,n:0,wins:0,imp:0}));
+  let dn=0,dw=0,dimp=0;
+  for(const m of rows){
+    const s2=1/m.b365h+1/m.b365d+1/m.b365a;
+    const ph=(1/m.b365h)/s2, pa2=(1/m.b365a)/s2, pd=(1/m.b365d)/s2;
+    dn++; dimp+=pd; if(m.fthg===m.ftag)dw++;
+    const fav=ph>=pa2?{p:ph,won:m.fthg>m.ftag}:{p:pa2,won:m.ftag>m.fthg};
+    for(const b of bands) if(fav.p>=b.lo&&fav.p<b.hi){b.n++;b.imp+=fav.p;if(fav.won)b.wins++;}
+  }
+  return `<div class="panel"><details><summary style="cursor:pointer"><b style="color:var(--accent)">MARKET BACKTEST</b> <span class="muted small">· ${rows.length} matches · closing odds, overround-stripped · click to expand</span></summary>
+  <table style="margin-top:10px"><tr><th>Favorite priced</th><th>Matches</th><th>Market implied</th><th>Actually won</th><th>Market error</th></tr>
+  ${bands.filter(b=>b.n>10).map(b=>{const imp=b.imp/b.n*100, act=b.wins/b.n*100, e=act-imp;return `<tr><td class="num">${Math.round(b.lo*100)}-${Math.round((b.hi>1?1:b.hi)*100)}%</td><td class="num">${b.n}</td><td class="num">${imp.toFixed(1)}%</td><td class="num">${act.toFixed(1)}%</td><td class="num ${e>0?"pos":"neg"}">${e>0?"+":""}${e.toFixed(1)}pp</td></tr>`}).join("")}
+  <tr><td>Draws (all matches)</td><td class="num">${dn}</td><td class="num">${(dimp/dn*100).toFixed(1)}%</td><td class="num">${(dw/dn*100).toFixed(1)}%</td><td class="num ${dw/dn>dimp/dn?"pos":"neg"}">${((dw/dn-dimp/dn)*100).toFixed(1)}pp</td></tr></table>
+  <p class="small muted" style="margin-top:8px">Negative = market overprices that band. Where favorites underdeliver vs implied, the Script A SIEGE thesis (favorites vs low blocks are systematically overpriced) has 5 seasons of evidence.</p></details></div>`;
+}
 function vProfile(){
   const team=profileTeam;
   const profs=PROFILES[team]||[];
@@ -587,6 +684,7 @@ function vProfile(){
     <table><tr><th>Formation</th><th>Usage</th><th>Goals</th><th>Attack xG</th></tr>${formationRows(st)}</table>
     ${coach?`<p class="small" style="margin-top:10px"><b class="muted">COACH:</b> ${esc(coach.name)}${coach.formations?" · "+esc(coach.formations):""}${coach.press?` · TMS axes: PRESS ${coach.press} / POSS ${coach.poss} / RISK ${coach.risk} / ADAPT ${coach.adapt}`:""}</p>`:""}
   </div>
+  ${h2hPanel(team)}
   <div class="panel"><h2>Season-by-season (last ${trend.length})</h2>
     <table><tr><th>Season</th><th>Pos</th><th>W-D-L</th><th>GF:GA</th><th>Pts</th><th>Final form</th></tr>
     ${trend.slice().reverse().map(r=>`<tr class="rowbtn" onclick="setPlSeason('${r.season}')"><td class="num">${r.season}</td><td class="num"><b>#${r.pos}</b></td><td class="num">${r.w}-${r.d}-${r.l}</td><td class="num">${r.gf}:${r.ga}</td><td class="num" style="color:var(--accent);font-weight:700">${r.pts}</td><td>${formBadges(r.form)}</td></tr>`).join("")}</table>
@@ -715,7 +813,7 @@ function vCalc(){
   return `
   <div class="panel"><h2>Pipeline Calculator — base → PRS → AIS → TMS → context</h2>
   <div class="formrow">
-    <label>Base probability %<input id="c_base" type="number" value="50" style="width:90px" oninput="calc()"></label>
+    <label>Base probability %<input id="c_base" type="number" value="${CALCPRE||50}" style="width:90px" oninput="calc()"></label>
     <label>PRS adjustment % (cap ±15)<input id="c_prs" type="number" value="0" style="width:90px" oninput="calc()"></label>
     <label>TMS adjustment % (cap ±6)<input id="c_tms" type="number" value="0" style="width:90px" oninput="calc()"></label>
     <label>Context % <input id="c_ctx" type="number" value="0" style="width:90px" oninput="calc()"></label>
