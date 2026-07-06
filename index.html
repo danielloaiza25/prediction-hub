@@ -93,23 +93,33 @@ async function api(path, opts={}){
   return r.status===204?null:r.json();
 }
 
-let DB = {predictions:[], players:[], coaches:[], teams:[], venues:[], news:[], settings:{}};
+let DB = {predictions:[], players:[], coaches:[], teams:[], venues:[], news:[], settings:{}, plf:[], plt:[], plstate:null};
 let TAB = location.hash.replace("#","") || "dashboard";
 
 async function loadAll(){
   document.getElementById("syncstate").textContent="syncing…";
-  const [p,pl,co,te,ve,ne,se] = await Promise.all([
+  const [p,pl,co,te,ve,ne,se,plf,plt] = await Promise.all([
     api("predictions?select=*&order=match_date.desc.nullslast,entry_no.desc"),
     api("players?select=*&order=team.asc,prs.desc"),
     api("coaches?select=*&order=team.asc"),
     api("teams?select=*&order=name.asc"),
     api("venues?select=*&order=altitude_m.desc"),
     api("news_items?select=*&order=item_date.desc,id.desc"),
-    api("settings?select=*")
+    api("settings?select=*"),
+    api("pl_fixtures?select=*&order=kickoff.asc.nullslast"),
+    api("pl_teams?select=*&order=name.asc")
   ]);
-  DB={predictions:p, players:pl, coaches:co, teams:te, venues:ve, news:ne, settings:Object.fromEntries(se.map(s=>[s.key,s.value]))};
+  DB={predictions:p, players:pl, coaches:co, teams:te, venues:ve, news:ne, settings:Object.fromEntries(se.map(s=>[s.key,s.value])), plf:plf, plt:plt};
+  DB.plstate = DB.settings.pl_state || null;
   document.getElementById("syncstate").textContent="✓ synced "+new Date().toLocaleTimeString();
   render();
+}
+async function syncPL(silent=true){
+  try{
+    const r = await fetch(SB_URL+"/functions/v1/sync-pl");
+    const d = await r.json();
+    if(d.ok){ const formOpen = showAddPred||showAddNews||showAddPlayer||showAddCoach||showAddVenue; if(!formOpen) await loadAll(); if(!silent) toast("PL data refreshed — "+d.fixtures+" fixtures"); }
+  }catch(e){ if(!silent) toast("PL sync failed: "+e.message,false); }
 }
 function toast(m,ok=true){const t=document.getElementById("toast");t.textContent=m;t.style.borderColor=ok?"var(--green)":"var(--red)";t.style.display="block";setTimeout(()=>t.style.display="none",3500);}
 const esc = s => (s==null?"":String(s)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
@@ -118,7 +128,7 @@ const fmtadj = v => v==null||v===0?'<span class="muted">—</span>':`<span class
 const outcomeTag = o => !o?'<span class="tag pend">PENDING</span>':o==="HIT"?'<span class="tag hit">✅ HIT</span>':o==="MISS"?'<span class="tag miss">❌ MISS</span>':o.startsWith("AVOID")?`<span class="tag avoid">${o==="AVOID_CORRECT"?"✅":"❌"} ${o.replace("_"," ")}</span>`:esc(o);
 
 /* ---------- NAV ---------- */
-const TABS = [["dashboard","Dashboard"],["predictions","Prediction Log"],["fixtures","Fixtures / Lineup Watch"],["players","PRS Players"],["coaches","Coaches (TMS)"],["venues","Venues (AIS)"],["calculator","Calculator"],["data","Import / Export"]];
+const TABS = [["dashboard","Dashboard"],["predictions","Prediction Log"],["fixtures","Fixtures / Lineup Watch"],["pltable","PL Table"],["players","PRS Players"],["coaches","Coaches (TMS)"],["venues","Venues (AIS)"],["calculator","Calculator"],["data","Import / Export"]];
 function renderNav(){
   document.getElementById("nav").innerHTML = TABS.map(([k,l])=>`<button class="${TAB===k?'active':''}" onclick="go('${k}')">${l}</button>`).join("");
 }
@@ -130,6 +140,7 @@ function render(){
   if(TAB==="dashboard") m.innerHTML=vDashboard();
   else if(TAB==="predictions") m.innerHTML=vPredictions();
   else if(TAB==="fixtures") m.innerHTML=vFixtures();
+  else if(TAB==="pltable") m.innerHTML=vPLTable();
   else if(TAB==="players") m.innerHTML=vPlayers();
   else if(TAB==="coaches") m.innerHTML=vCoaches();
   else if(TAB==="venues") m.innerHTML=vVenues();
@@ -137,6 +148,54 @@ function render(){
   else if(TAB==="data") m.innerHTML=vData();
   window.scrollTo(0,0);
 }
+
+/* ---------- PL HELPERS ---------- */
+const getFx = id => DB.plf.find(f=>f.id===id);
+const fxLabel = f => `${f.team_h_name} vs ${f.team_a_name}`;
+const fxScore = f => f.team_h_score==null?"":`${f.team_h_score}-${f.team_a_score}`;
+const fxWinner = f => !f.finished?null:(f.team_h_score>f.team_a_score?f.team_h_name:f.team_a_score>f.team_h_score?f.team_a_name:"Draw");
+const fxResultStr = f => `${f.team_h_name} ${f.team_h_score}-${f.team_a_score} ${f.team_a_name}`;
+function seasonNotStarted(s){ return s && !s.season_over && (s.current_gw==null); }
+function plBanner(){
+  const s=DB.plstate;
+  if(!s) return `<div class="panel" style="margin-top:0"><h2>Premier League</h2><p class="muted">No PL data yet — <button class="btn sm" onclick="syncPL(false)">Sync now</button></p></div>`;
+  let big, sub, extra="";
+  if(s.season_over){
+    big=`SEASON ${s.season} COMPLETE`;
+    sub=`All 38 matchweeks played · next season's fixtures load automatically when the FPL API resets (usually July)`;
+  } else if(seasonNotStarted(s)){
+    big=`SEASON ${s.season} — NOT STARTED`;
+    sub=s.first_kickoff?`First kickoff: ${new Date(s.first_kickoff).toLocaleString([],{dateStyle:"full",timeStyle:"short"})}`:"Fixtures loaded, awaiting kickoff";
+  } else {
+    big=`MATCHWEEK ${s.current_gw} <span class="muted" style="font-weight:400">of 38</span>`;
+    sub=`Season ${s.season}`;
+    const live=DB.plf.filter(f=>f.started&&!f.finished);
+    if(live.length) extra=`<div style="margin-top:8px">${live.map(f=>`<span class="tag miss">● LIVE</span> ${esc(fxLabel(f))} <b class="num">${fxScore(f)}</b>`).join(" &nbsp; ")}</div>`;
+  }
+  return `<div class="panel" style="margin-top:0;border-color:var(--accent)">
+    <div class="flex"><div>
+      <div style="font-size:22px;font-weight:800;letter-spacing:.5px">${big}</div>
+      <div class="muted small" style="margin-top:4px">${sub}</div>${extra}
+    </div>
+    <div class="right small muted" style="text-align:right">last sync ${s.last_sync?new Date(s.last_sync).toLocaleTimeString():"—"}<br><button class="btn ghost sm" onclick="syncPL(false)" style="margin-top:4px">↻ Refresh</button></div></div>
+  </div>`;
+}
+function plTable(){
+  const done=DB.plf.filter(f=>f.finished&&f.team_h_name&&f.team_a_name);
+  const t={};
+  for(const tm of DB.plt) t[tm.name]={team:tm.name,p:0,w:0,d:0,l:0,gf:0,ga:0,cs:0,pts:0,form:[],hw:0,hd:0,hl:0,aw:0,ad:0,al:0};
+  const byDate=[...done].sort((a,b)=>new Date(a.kickoff)-new Date(b.kickoff));
+  for(const f of byDate){
+    const h=t[f.team_h_name],a=t[f.team_a_name]; if(!h||!a)continue;
+    h.p++;a.p++;h.gf+=f.team_h_score;h.ga+=f.team_a_score;a.gf+=f.team_a_score;a.ga+=f.team_h_score;
+    if(f.team_a_score===0)h.cs++; if(f.team_h_score===0)a.cs++;
+    if(f.team_h_score>f.team_a_score){h.w++;h.hw++;a.l++;a.al++;h.pts+=3;h.form.push("W");a.form.push("L");}
+    else if(f.team_h_score<f.team_a_score){a.w++;a.aw++;h.l++;h.hl++;a.pts+=3;a.form.push("W");h.form.push("L");}
+    else{h.d++;h.hd++;a.d++;a.ad++;h.pts++;a.pts++;h.form.push("D");a.form.push("D");}
+  }
+  return Object.values(t).sort((x,y)=>y.pts-x.pts||(y.gf-y.ga)-(x.gf-x.ga)||y.gf-x.gf);
+}
+const formBadges = arr => arr.slice(-5).map(r=>`<span class="tag ${r==="W"?"hit":r==="L"?"miss":"pend"}" style="padding:1px 6px;margin-right:2px">${r}</span>`).join("");
 
 /* ---------- DASHBOARD ---------- */
 function tierStats(){
@@ -173,7 +232,7 @@ function vDashboard(){
   const pending = DB.predictions.filter(p=>p.stage==="predicted"&&!p.outcome);
   const watch = DB.predictions.filter(p=>p.lineup_watch&&!p.outcome);
   const rules = DB.settings.hard_rules||[];
-  return `
+  return plBanner()+`
   <div class="grid cards">
     ${card("5-6★ Record",pct(t.five.h,t.five.t),`${t.five.h}/${t.five.t} · bet with confidence`,t.five.h,t.five.t)}
     ${card("4★ Record",pct(t.four.h,t.four.t),`${t.four.h}/${t.four.t} · standard bets`,t.four.h,t.four.t)}
@@ -181,7 +240,7 @@ function vDashboard(){
     ${card("Game-Script Bets",pct(bs.h,bs.t),`${bs.h}/${bs.t} · TMS supplementary markets`,bs.h,bs.t)}
     ${card("Edge vs Market",es.avg==null?"—":(es.avg>0?"+":"")+es.avg.toFixed(1)+"pp",es.n?`${es.n} priced calls`:"log closing odds to measure")}
   </div>
-  ${pending.length?`<div class="panel"><h2>Live Calls</h2><table><tr><th>Match</th><th>Pick</th><th>Prob</th><th>Stars</th><th></th></tr>${pending.map(p=>`<tr class="rowbtn" onclick="go('predictions')"><td>${esc(p.match)}</td><td><b>${esc(p.pick)}</b></td><td class="num">${p.final_prob}%</td><td class="stars">${starstr(p.stars)}</td><td>${p.lineup_watch?'<span class="tag watch">👁 LINEUP WATCH</span>':''}</td></tr>`).join("")}</table></div>`:""}
+  ${pending.length?`<div class="panel"><h2>Live Calls</h2><table><tr><th>Match</th><th>Pick</th><th>Prob</th><th>Stars</th><th></th></tr>${pending.map(p=>{const f=p.fixture_id?getFx(p.fixture_id):null;const resin=f&&f.finished;return `<tr class="rowbtn" onclick="expandId=${p.id};go('predictions')"><td>${esc(p.match)}</td><td><b>${esc(p.pick)}</b></td><td class="num">${p.final_prob}%</td><td class="stars">${starstr(p.stars)}</td><td>${resin?`<span class="tag hit">RESULT IN ${fxScore(f)} — settle</span>`:p.lineup_watch?'<span class="tag watch">👁 LINEUP WATCH</span>':''}</td></tr>`}).join("")}</table></div>`:""}
   ${watch.length?`<div class="panel"><h2>⚠ Lineup Watch — no bets before confirmed XIs</h2>${watch.map(p=>`<div class="detail"><b>${esc(p.match)}</b> — ${esc(p.lineup_watch_note||"PRS 8+ player in doubt")}</div>`).join("")}</div>`:""}
   <div class="panel"><h2>Legacy Record — ${esc(legacy.label||"PL/CL")}</h2>
     <p class="muted small">${esc(legacy.note||"")}</p>
@@ -234,23 +293,38 @@ function predDetail(p){
     ${(p.bets||[]).length?`<p style="margin-top:8px"><b class="muted small">SUPPLEMENTARY BETS:</b></p><table>${p.bets.map(b=>`<tr><td>${esc(b.market)} — ${esc(b.pick)}</td><td class="num">${b.prob?b.prob+"%":""}</td><td>${b.result?outcomeTag(b.result):'<span class="tag pend">PENDING</span>'}</td></tr>`).join("")}</table>`:""}
     ${p.closing_odds?`<p class="small" style="margin-top:8px"><b class="muted">CLOSING ODDS:</b> <span class="num">${p.closing_odds}</span> (market ${(p.market_prob??(100/p.closing_odds)).toFixed(1)}% vs our ${p.final_prob}%)</p>`:""}
     ${p.audit_notes?`<p class="small" style="margin-top:8px"><b class="muted">AUDIT:</b> ${esc(p.audit_notes)}</p>`:""}
-    ${!p.outcome?`
-    <div class="formrow" style="margin-top:12px">
-      <label>Result (score)<input id="res_${p.id}" placeholder="e.g. Mexico 2-1"></label>
-      <label>Outcome<select id="out_${p.id}"><option>HIT</option><option>MISS</option><option>AVOID_CORRECT</option><option>AVOID_INCORRECT</option></select></label>
+    ${settleBlock(p)}
+  </div>`;
+}
+function settleBlock(p){
+  if(p.outcome) return `<div class="formrow" style="margin-top:10px"><button class="btn ghost sm" onclick="delPred(${p.id})">Delete entry</button></div>`;
+  const f=p.fixture_id?getFx(p.fixture_id):null;
+  const resIn = f && f.finished;
+  let banner="", resVal="", sugg=null;
+  if(resIn){
+    const w=fxWinner(f);
+    sugg = p.is_avoid ? "AVOID_CORRECT" : (w && p.pick && w.toLowerCase()===String(p.pick).toLowerCase() ? "HIT" : "MISS");
+    resVal = fxResultStr(f);
+    banner = `<p style="margin-top:10px"><span class="tag hit">RESULT IN</span> <b>${esc(resVal)}</b> <span class="muted small">— auto-filled, confirm outcome + audit note</span></p>`;
+  }
+  return `${banner}
+    <div class="formrow" style="margin-top:${resIn?"8":"12"}px">
+      <label>Result (score)<input id="res_${p.id}" value="${esc(resVal)}" placeholder="e.g. Arsenal 2-1"></label>
+      <label>Outcome<select id="out_${p.id}">${["HIT","MISS","AVOID_CORRECT","AVOID_INCORRECT"].map(o=>`<option ${o===sugg?"selected":""}>${o}</option>`).join("")}</select></label>
       <label>Closing odds (decimal)<input id="odds_${p.id}" type="number" step="0.01" value="${p.closing_odds||""}"></label>
       <label>Audit notes<input id="aud_${p.id}" style="width:260px"></label>
       <button class="btn sm" onclick="settle(${p.id})">Settle</button>
-    </div>`:`<div class="formrow" style="margin-top:10px"><button class="btn ghost sm" onclick="delPred(${p.id})">Delete entry</button></div>`}
-  </div>`;
+    </div>`;
 }
 function predForm(){
-  return `<div class="panel"><h2>New Prediction</h2>
+  const pf=PREFILL||{};
+  return `<div class="panel"><h2>New Prediction${pf.fixture_id?` — <span class="muted small">linked to PL fixture, result will auto-fill</span>`:""}</h2>
+  <input type="hidden" id="np_fx" value="${pf.fixture_id||""}">
   <div class="formrow">
     <label>Entry #<input id="np_no" type="number" style="width:70px" value="${Math.max(0,...DB.predictions.map(p=>p.entry_no||0))+1}"></label>
-    <label>Match<input id="np_match" placeholder="Arsenal vs Man City" style="width:220px"></label>
-    <label>Competition<input id="np_comp" value="Premier League"></label>
-    <label>Date<input id="np_date" type="date"></label>
+    <label>Match<input id="np_match" placeholder="Arsenal vs Man City" style="width:220px" value="${esc(pf.match||"")}"></label>
+    <label>Competition<input id="np_comp" value="${esc(pf.comp||"Premier League")}"></label>
+    <label>Date<input id="np_date" type="date" value="${pf.date||""}"></label>
     <label>Venue<input id="np_venue" list="venuelist"><datalist id="venuelist">${DB.venues.map(v=>`<option value="${esc(v.stadium)}">`).join("")}</datalist></label>
   </div>
   <div class="formrow">
@@ -281,9 +355,9 @@ async function addPred(){
     venue:g("np_venue").value||null, stage:"predicted", pick:g("np_pick").value||null, base_prob:base, prs_adj:prs, ais_adj:ais, tms_adj:tms, context_adj:ctx,
     final_prob:base!=null?Math.round(base+prs+ais+tms+ctx):null, stars:+g("np_stars").value, game_script:g("np_script").value||null,
     is_avoid:g("np_avoid").checked, lineup_watch:g("np_watch").checked, lineup_watch_note:g("np_watchnote").value||null,
-    layer_notes:g("np_notes").value?{note:g("np_notes").value}:{}};
+    layer_notes:g("np_notes").value?{note:g("np_notes").value}:{}, fixture_id:+g("np_fx").value||null};
   if(!body.match) return toast("Match required",false);
-  try{await api("predictions",{method:"POST",body}); showAddPred=false; toast("Prediction logged"); loadAll();}catch(e){toast(e.message,false)}
+  try{await api("predictions",{method:"POST",body}); showAddPred=false; PREFILL=null; toast("Prediction logged"); loadAll();}catch(e){toast(e.message,false)}
 }
 async function settle(id){
   const g=k=>document.getElementById(k+"_"+id).value;
@@ -294,14 +368,40 @@ async function settle(id){
 async function delPred(id){ if(!confirm("Delete this entry?"))return; try{await api("predictions?id=eq."+id,{method:"DELETE"}); expandId=null; toast("Deleted"); loadAll();}catch(e){toast(e.message,false)} }
 
 /* ---------- FIXTURES ---------- */
-let showAddNews=false;
+let showAddNews=false, mwSel=null;
+function vMatchweek(){
+  if(!DB.plf.length) return "";
+  const s=DB.plstate||{};
+  const mw = mwSel || s.current_gw || s.next_gw || 1;
+  const fs = DB.plf.filter(f=>f.event===mw).sort((a,b)=>new Date(a.kickoff||"2100")-new Date(b.kickoff||"2100"));
+  const predByFx = Object.fromEntries(DB.predictions.filter(p=>p.fixture_id).map(p=>[p.fixture_id,p]));
+  return `<div class="panel"><div class="flex"><h2>Premier League — Matchweek</h2>
+    <select class="right" onchange="mwSel=+this.value;render()">${Array.from({length:38},(_,i)=>i+1).map(n=>`<option value="${n}" ${n===mw?"selected":""}>MW ${n}${n===s.current_gw?" · current":""}</option>`).join("")}</select></div>
+  <table><tr><th>Kickoff</th><th>Match</th><th>Score</th><th>Status</th><th>Prediction</th></tr>
+  ${fs.map(f=>{
+    const p=predByFx[f.id];
+    const status = f.finished?'<span class="tag hit">FT</span>':f.started?'<span class="tag miss">● LIVE</span>':'<span class="tag pend">UPCOMING</span>';
+    const predCell = p
+      ? `<span class="rowbtn" style="cursor:pointer" onclick="expandId=${p.id};go('predictions')">${p.is_avoid?'<span class="tag avoid">AVOID</span>':`<b>${esc(p.pick||"—")}</b> ${p.final_prob!=null?p.final_prob+"%":""} <span class="stars">${starstr(p.stars)}</span>`} ${p.outcome?outcomeTag(p.outcome):(f.finished?'<span class="tag hit">settle →</span>':'')}</span>`
+      : (f.finished?'<span class="muted small">—</span>':`<button class="btn ghost sm" onclick="predictFixture(${f.id})">+ Predict</button>`);
+    return `<tr><td class="num small">${f.kickoff?new Date(f.kickoff).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}):"TBD"}</td>
+    <td><b>${esc(fxLabel(f))}</b></td><td class="num">${fxScore(f)||"—"}</td><td>${status}</td><td>${predCell}</td></tr>`}).join("")}
+  </table>${fs.length?"":'<p class="muted" style="padding:10px">No fixtures scheduled for this matchweek yet.</p>'}</div>`;
+}
+let PREFILL=null;
+function predictFixture(fid){
+  const f=getFx(fid); if(!f)return;
+  PREFILL={match:fxLabel(f), date:f.kickoff?f.kickoff.slice(0,10):"", fixture_id:f.id, comp:"Premier League"};
+  showAddPred=true; go("predictions");
+}
 function vFixtures(){
   const up = DB.predictions.filter(p=>!p.outcome);
-  return `
+  return plBanner()+`
   <div class="grid cards">
     ${card("Open calls",up.length,"unsettled predictions")}
     ${card("Lineup watches",up.filter(p=>p.lineup_watch).length,"waiting on confirmed XIs")}
   </div>
+  ${vMatchweek()}
   <div class="panel"><h2>Upcoming / Unsettled</h2>
   ${up.length?`<table><tr><th>Date</th><th>Match</th><th>Venue</th><th>Pick</th><th>Stars</th><th>Status</th></tr>
   ${up.map(p=>`<tr><td class="num">${p.match_date||"—"}</td><td><b>${esc(p.match)}</b></td><td class="muted">${esc(p.venue||"—")}</td><td>${p.is_avoid?'<span class="tag avoid">AVOID</span>':esc(p.pick||"not called yet")}</td><td class="stars">${starstr(p.stars)}</td>
@@ -325,6 +425,24 @@ async function addNews(){
   try{await api("news_items",{method:"POST",body});showAddNews=false;toast("Added");loadAll();}catch(e){toast(e.message,false)}
 }
 async function delNews(id){try{await api("news_items?id=eq."+id,{method:"DELETE"});loadAll();}catch(e){toast(e.message,false)}}
+
+/* ---------- PL TABLE ---------- */
+function vPLTable(){
+  const rows=plTable();
+  if(!rows.length||!rows.some(r=>r.p>0)) return plBanner()+`<div class="panel"><h2>League Table</h2><p class="muted">No finished matches yet this season — the table builds itself as results come in.</p></div>`;
+  return plBanner()+`
+  <div class="panel" style="padding:6px 10px"><table>
+  <tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>CS</th><th>Pts</th><th>Home</th><th>Away</th><th>Form (last 5)</th></tr>
+  ${rows.map((r,i)=>`<tr>
+    <td class="num muted">${i+1}</td><td><b>${esc(r.team)}</b></td>
+    <td class="num">${r.p}</td><td class="num">${r.w}</td><td class="num">${r.d}</td><td class="num">${r.l}</td>
+    <td class="num">${r.gf}</td><td class="num">${r.ga}</td><td class="num">${r.gf-r.ga>0?"+":""}${r.gf-r.ga}</td>
+    <td class="num">${r.cs}</td><td class="num" style="font-weight:700;color:var(--accent)">${r.pts}</td>
+    <td class="num small muted">${r.hw}-${r.hd}-${r.hl}</td><td class="num small muted">${r.aw}-${r.ad}-${r.al}</td>
+    <td>${formBadges(r.form)}</td></tr>`).join("")}
+  </table></div>
+  <div class="panel"><p class="small muted">Computed live from synced results. Rotation flags for form-stripping (Hard Rule 4) stay manual — mark them on the prediction's audit when relevant. CS = clean sheets. Home/Away = W-D-L.</p></div>`;
+}
 
 /* ---------- PLAYERS ---------- */
 let playerFilter="", showAddPlayer=false, sortKey="prs";
@@ -493,7 +611,7 @@ function calc(){
 /* ---------- IMPORT / EXPORT ---------- */
 const IMPORT_SPEC = {
   version: 1,
-  predictions: [{entry_no:26, match:"Team A vs Team B", competition:"Premier League", match_date:"2026-08-15", venue:"Anfield", stage:"predicted", pick:"Team A", base_prob:55, prs_adj:-4, ais_adj:0, tms_adj:3, context_adj:1, final_prob:55, stars:4, game_script:"B OPEN EXCHANGE", bets:[{market:"BTTS",pick:"Yes",prob:60}], is_avoid:false, lineup_watch:true, lineup_watch_note:"Player X (PRS 9) doubtful", layer_notes:{prs:"X doubtful -4%",tms:"open exchange +3%"}}],
+  predictions: [{entry_no:26, match:"Team A vs Team B", competition:"Premier League", match_date:"2026-08-15", venue:"Anfield", stage:"predicted", pick:"Team A", base_prob:55, prs_adj:-4, ais_adj:0, tms_adj:3, context_adj:1, final_prob:55, stars:4, game_script:"B OPEN EXCHANGE", bets:[{market:"BTTS",pick:"Yes",prob:60}], is_avoid:false, lineup_watch:true, lineup_watch_note:"Player X (PRS 9) doubtful", layer_notes:{prs:"X doubtful -4%",tms:"open exchange +3%"}, fixture_id:null}],
   settle: [{entry_no:25, result:"Mexico 2-1", outcome:"HIT", audit_notes:"", closing_odds:2.4}],
   players: [{name:"Player", team:"Team", position:"ST", prs:8, status:"fit", fitness_pct:null, hot_streak:false, penalty_taker:false, set_piece_taker:false, notes:""}],
   coaches: [{name:"Coach", team:"Team", formations:"4-3-3", press:8, poss:7, risk:6, adapt:5, notes:""}],
@@ -541,6 +659,12 @@ function briefing(){
     "# FOOTBALL PREDICTION SYSTEM — SESSION BRIEFING",
     "Generated "+new Date().toISOString().slice(0,10)+" from the Hub. This is the current system state; use it as full context.",
     "",
+    "## Premier League state",
+    (()=>{const s=DB.plstate; if(!s)return "- no PL data synced";
+      if(s.season_over)return `- Season ${s.season} COMPLETE (38/38). New season fixtures pending FPL reset.`;
+      if(seasonNotStarted(s))return `- Season ${s.season} NOT STARTED. First kickoff: ${s.first_kickoff||"TBD"}.`;
+      return `- Season ${s.season}, Matchweek ${s.current_gw} of 38. Table and form live in the Hub.`})(),
+    "",
     "## Record",
     `- 5-6★: ${t.five.h}/${t.five.t} (${pct(t.five.h,t.five.t)}) · 4★: ${t.four.h}/${t.four.t} (${pct(t.four.h,t.four.t)}) · AVOID correct: ${t.avoid.h}/${t.avoid.t} · game-script bets: ${bs.h}/${bs.t}`,
     "",
@@ -572,9 +696,9 @@ function backup(){
 
 /* ---------- INIT ---------- */
 window.addEventListener("hashchange",()=>{TAB=location.hash.replace("#","")||"dashboard";render();});
-loadAll().then(()=>{if(TAB==="calculator")calc();}).catch(e=>{document.getElementById("main").innerHTML='<div class="panel"><h2>Connection error</h2><p class="muted">'+esc(e.message)+'</p></div>';});
+loadAll().then(()=>{if(TAB==="calculator")calc(); syncPL(true);}).catch(e=>{document.getElementById("main").innerHTML='<div class="panel"><h2>Connection error</h2><p class="muted">'+esc(e.message)+'</p></div>';});
+setInterval(()=>syncPL(true), 5*60*1000); // refresh PL data every 5 min while the Hub is open
 const _origRender=render; render=function(){_origRender(); if(TAB==="calculator")setTimeout(calc,0);};
 </script>
 </body>
 </html>
-<!-- build 1783355992 -->
