@@ -125,7 +125,7 @@ function toast(m,ok=true){const t=document.getElementById("toast");t.textContent
 const esc = s => (s==null?"":String(s)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 const starstr = n => n?("⭐".repeat(Math.min(n,6))):"—";
 const fmtadj = v => v==null||v===0?'<span class="muted">—</span>':`<span class="${v>0?'pos':'neg'} num">${v>0?'+':''}${v}%</span>`;
-const outcomeTag = o => !o?'<span class="tag pend">PENDING</span>':o==="HIT"?'<span class="tag hit">✅ HIT</span>':o==="MISS"?'<span class="tag miss">❌ MISS</span>':o.startsWith("AVOID")?`<span class="tag avoid">${o==="AVOID_CORRECT"?"✅":"❌"} ${o.replace("_"," ")}</span>`:esc(o);
+const outcomeTag = o => !o?'<span class="tag pend">PENDING</span>':o==="HIT"?'<span class="tag hit">✅ HIT</span>':o==="MISS"?'<span class="tag miss">❌ MISS</span>':o==="UNRESOLVED"?'<span class="tag pend" style="opacity:.6">UNRESOLVED</span>':o.startsWith("AVOID")?`<span class="tag avoid">${o==="AVOID_CORRECT"?"✅":"❌"} ${o.replace("_"," ")}</span>`:esc(o);
 
 /* ---------- NAV ---------- */
 const TABS = [["dashboard","Dashboard"],["predictions","Prediction Log"],["fixtures","Fixtures / Lineup Watch"],["pltable","PL Table"],["players","PRS Players"],["coaches","Coaches (TMS)"],["venues","Venues (AIS)"],["calculator","Calculator"],["data","Import / Export"]];
@@ -205,6 +205,7 @@ function tierStats(){
   for(const p of live){
     if(p.outcome==="AVOID_CORRECT"){t.avoid.h++;t.avoid.t++;continue;}
     if(p.outcome==="AVOID_INCORRECT"){t.avoid.t++;continue;}
+    if(p.outcome==="UNRESOLVED"||p.outcome==="PENDING")continue;
     const hit = p.outcome==="HIT";
     if(p.stars>=5){t.five.t++; if(hit)t.five.h++;}
     else if(p.stars===4){t.four.t++; if(hit)t.four.h++;}
@@ -242,10 +243,10 @@ function vDashboard(){
   </div>
   ${pending.length?`<div class="panel"><h2>Live Calls</h2><table><tr><th>Match</th><th>Pick</th><th>Prob</th><th>Stars</th><th></th></tr>${pending.map(p=>{const f=p.fixture_id?getFx(p.fixture_id):null;const resin=f&&f.finished;return `<tr class="rowbtn" onclick="expandId=${p.id};go('predictions')"><td>${esc(p.match)}</td><td><b>${esc(p.pick)}</b></td><td class="num">${p.final_prob}%</td><td class="stars">${starstr(p.stars)}</td><td>${resin?`<span class="tag hit">RESULT IN ${fxScore(f)} — settle</span>`:p.lineup_watch?'<span class="tag watch">👁 LINEUP WATCH</span>':''}</td></tr>`}).join("")}</table></div>`:""}
   ${watch.length?`<div class="panel"><h2>⚠ Lineup Watch — no bets before confirmed XIs</h2>${watch.map(p=>`<div class="detail"><b>${esc(p.match)}</b> — ${esc(p.lineup_watch_note||"PRS 8+ player in doubt")}</div>`).join("")}</div>`:""}
-  <div class="panel"><h2>Legacy Record — ${esc(legacy.label||"PL/CL")}</h2>
+  ${DB.settings.legacy_record?`<div class="panel"><h2>Legacy Record — ${esc(legacy.label||"PL/CL")}</h2>
     <p class="muted small">${esc(legacy.note||"")}</p>
     <p style="margin-top:8px" class="num">4★+ combined: <b>${legacy.four_plus?.hits||0}/${legacy.four_plus?.total||0}</b> (${pct(legacy.four_plus?.hits||0,legacy.four_plus?.total||0)})</p>
-  </div>
+  </div>`:""}
   <div class="panel"><h2>Hard Rules — each one paid for with a loss</h2>
     ${rules.map(r=>`<details class="rule"><summary>${esc(r.split("(")[0])}</summary><p class="muted small" style="padding:6px 0 2px">${esc(r)}</p></details>`).join("")}
   </div>`;
@@ -334,7 +335,7 @@ function predForm(){
     <label>AIS ±<input id="np_ais" type="number" style="width:70px" value="0"></label>
     <label>TMS ±<input id="np_tms" type="number" style="width:70px" value="0"></label>
     <label>Ctx ±<input id="np_ctx" type="number" style="width:70px" value="0"></label>
-    <label>Stars<select id="np_stars"><option>6</option><option>5</option><option selected>4</option><option>3</option><option>2</option><option>1</option></select></label>
+    <label>Stars<select id="np_stars"><option>5</option><option selected>4</option><option>3</option><option>2</option><option>1</option></select></label>
     <label>Script<select id="np_script"><option value="">—</option><option>A SIEGE</option><option>B OPEN EXCHANGE</option><option>C MIRROR</option><option>D WING OVERLOAD</option><option>E PRESS TRAP</option></select></label>
     <label><span>AVOID call</span><input id="np_avoid" type="checkbox" style="width:20px;height:20px"></label>
   </div>
