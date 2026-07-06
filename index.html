@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prediction Hub</title>
+<style>
+:root{
+  --bg:#0b0e13; --panel:#141922; --panel2:#1a2130; --border:#242d3f;
+  --text:#e6ebf2; --muted:#8b97ab; --accent:#f5b942;
+  --green:#2ecc71; --red:#e74c5b; --blue:#4aa3ff; --purple:#a78bfa;
+  --font:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --mono:'SF Mono',Consolas,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;min-height:100vh}
+header{display:flex;align-items:center;gap:16px;padding:14px 22px;border-bottom:1px solid var(--border);background:var(--panel);position:sticky;top:0;z-index:50;flex-wrap:wrap}
+header h1{font-size:17px;letter-spacing:.5px}
+header h1 span{color:var(--accent)}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav button{background:none;border:1px solid transparent;color:var(--muted);padding:7px 13px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
+nav button:hover{color:var(--text)}
+nav button.active{background:var(--panel2);color:var(--accent);border-color:var(--border)}
+main{padding:22px;max-width:1280px;margin:0 auto}
+.grid{display:grid;gap:14px}
+.cards{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px}
+.card .k{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:6px}
+.card .v{font-size:26px;font-weight:700;font-family:var(--mono)}
+.card .s{font-size:12px;color:var(--muted);margin-top:4px}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin-top:14px}
+.panel h2{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--accent);margin-bottom:12px}
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer;white-space:nowrap}
+td{padding:9px 10px;border-bottom:1px solid #1c2434;vertical-align:top}
+tr.rowbtn{cursor:pointer}
+tr.rowbtn:hover td{background:#161d2a}
+.tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.4px}
+.tag.hit{background:rgba(46,204,113,.15);color:var(--green)}
+.tag.miss{background:rgba(231,76,91,.15);color:var(--red)}
+.tag.avoid{background:rgba(167,139,250,.15);color:var(--purple)}
+.tag.pend{background:rgba(74,163,255,.14);color:var(--blue)}
+.tag.watch{background:rgba(245,185,66,.15);color:var(--accent)}
+.stars{color:var(--accent);letter-spacing:1px;white-space:nowrap}
+.num{font-family:var(--mono)}
+.pos{color:var(--green)}.neg{color:var(--red)}
+.muted{color:var(--muted)}
+button.btn{background:var(--accent);color:#151515;border:none;padding:8px 16px;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px}
+button.btn.ghost{background:var(--panel2);color:var(--text);border:1px solid var(--border)}
+button.btn.sm{padding:4px 10px;font-size:12px}
+input,select,textarea{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px;font-family:var(--font)}
+textarea{width:100%;font-family:var(--mono);font-size:12px}
+input:focus,select:focus,textarea:focus{outline:1px solid var(--accent)}
+.formrow{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;align-items:flex-end}
+.formrow label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+.detail{background:var(--panel2);border-radius:10px;padding:14px;margin:6px 0}
+.layers{display:flex;gap:0;flex-wrap:wrap;align-items:center;font-family:var(--mono);font-size:13px;margin:8px 0}
+.layers .step{background:#0f1420;border:1px solid var(--border);border-radius:8px;padding:8px 12px;text-align:center;min-width:86px}
+.layers .step .lk{font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.7px}
+.layers .step .lv{font-size:15px;font-weight:700;margin-top:2px}
+.layers .arr{padding:0 8px;color:var(--muted)}
+.layers .final{border-color:var(--accent)}
+.layers .final .lv{color:var(--accent)}
+#toast{position:fixed;bottom:22px;right:22px;background:var(--panel2);border:1px solid var(--accent);color:var(--text);padding:12px 18px;border-radius:10px;display:none;z-index:99;max-width:420px}
+.bar{height:8px;background:#0f1420;border-radius:5px;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--green)}
+details.rule{border-bottom:1px solid #1c2434;padding:8px 4px}
+.flex{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.right{margin-left:auto}
+.calcout{background:#0f1420;border:1px solid var(--accent);border-radius:12px;padding:18px;margin-top:14px;text-align:center}
+.calcout .big{font-size:38px;font-weight:800;font-family:var(--mono);color:var(--accent)}
+.small{font-size:12px}
+@media(max-width:700px){main{padding:12px}.layers .step{min-width:70px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚽ PREDICTION <span>HUB</span></h1>
+  <nav id="nav"></nav>
+  <div class="right small muted" id="syncstate">connecting…</div>
+</header>
+<main id="main">Loading…</main>
+<div id="toast"></div>
+
+<script>
+const SB_URL = "https://fcuasuedmjrllqktkhql.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZjdWFzdWVkbWpybGxxa3RraHFsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyODQ5NDgsImV4cCI6MjA5ODg2MDk0OH0.8XtNieLQuFKnCmcTSp7P1RC5VNA84VNhck4JOKqhlsg";
+
+const H = {apikey:SB_KEY, Authorization:"Bearer "+SB_KEY, "Content-Type":"application/json"};
+async function api(path, opts={}){
+  const r = await fetch(SB_URL+"/rest/v1/"+path, {headers:{...H, ...(opts.headers||{})}, method:opts.method||"GET", body:opts.body?JSON.stringify(opts.body):undefined});
+  if(!r.ok){ const t=await r.text(); throw new Error(r.status+" "+t); }
+  return r.status===204?null:r.json();
+}
+
+let DB = {predictions:[], players:[], coaches:[], teams:[], venues:[], news:[], settings:{}};
+let TAB = location.hash.replace("#","") || "dashboard";
+
+async function loadAll(){
+  document.getElementById("syncstate").textContent="syncing…";
+  const [p,pl,co,te,ve,ne,se] = await Promise.all([
+    api("predictions?select=*&order=match_date.desc.nullslast,entry_no.desc"),
+    api("players?select=*&order=team.asc,prs.desc"),
+    api("coaches?select=*&order=team.asc"),
+    api("teams?select=*&order=name.asc"),
+    api("venues?select=*&order=altitude_m.desc"),
+    api("news_items?select=*&order=item_date.desc,id.desc"),
+    api("settings?select=*")
+  ]);
+  DB={predictions:p, players:pl, coaches:co, teams:te, venues:ve, news:ne, settings:Object.fromEntries(se.map(s=>[s.key,s.value]))};
+  document.getElementById("syncstate").textContent="✓ synced "+new Date().toLocaleTimeString();
+  render();
+}
+function toast(m,ok=true){const t=document.getElementById("toast");t.textContent=m;t.style.borderColor=ok?"var(--green)":"var(--red)";t.style.display="block";setTimeout(()=>t.style.display="none",3500);}
+const esc = s => (s==null?"":String(s)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+const starstr = n => n?("⭐".repeat(Math.min(n,6))):"—";
+const fmtadj = v => v==null||v===0?'<span class="muted">—</span>':`<span class="${v>0?'pos':'neg'} num">${v>0?'+':''}${v}%</span>`;
+const outcomeTag = o => !o?'<span class="tag pend">PENDING</span>':o==="HIT"?'<span class="tag hit">✅ HIT</span>':o==="MISS"?'<span class="tag miss">❌ MISS</span>':o.startsWith("AVOID")?`<span class="tag avoid">${o==="AVOID_CORRECT"?"✅":"❌"} ${o.replace("_"," ")}</span>`:esc(o);
+
+/* ---------- NAV ---------- */
+const TABS = [["dashboard","Dashboard"],["predictions","Prediction Log"],["fixtures","Fixtures / Lineup Watch"],["players","PRS Players"],["coaches","Coaches (TMS)"],["venues","Venues (AIS)"],["calculator","Calculator"],["data","Import / Export"]];
+function renderNav(){
+  document.getElementById("nav").innerHTML = TABS.map(([k,l])=>`<button class="${TAB===k?'active':''}" onclick="go('${k}')">${l}</button>`).join("");
+}
+function go(t){TAB=t;location.hash=t;render();}
+
+function render(){
+  renderNav();
+  const m=document.getElementById("main");
+  if(TAB==="dashboard") m.innerHTML=vDashboard();
+  else if(TAB==="predictions") m.innerHTML=vPredictions();
+  else if(TAB==="fixtures") m.innerHTML=vFixtures();
+  else if(TAB==="players") m.innerHTML=vPlayers();
+  else if(TAB==="coaches") m.innerHTML=vCoaches();
+  else if(TAB==="venues") m.innerHTML=vVenues();
+  else if(TAB==="calculator") m.innerHTML=vCalc();
+  else if(TAB==="data") m.innerHTML=vData();
+  window.scrollTo(0,0);
+}
+
+/* ---------- DASHBOARD ---------- */
+function tierStats(){
+  const legacy = DB.settings.legacy_record||{};
+  const live = DB.predictions.filter(p=>p.outcome);
+  const t = {five:{h:legacy.five_star?.hits||0,t:legacy.five_star?.total||0}, four:{h:legacy.four_star?.hits||0,t:legacy.four_star?.total||0}, three:{h:0,t:0}, avoid:{h:legacy.avoid?.correct||0,t:legacy.avoid?.total||0}};
+  for(const p of live){
+    if(p.outcome==="AVOID_CORRECT"){t.avoid.h++;t.avoid.t++;continue;}
+    if(p.outcome==="AVOID_INCORRECT"){t.avoid.t++;continue;}
+    const hit = p.outcome==="HIT";
+    if(p.stars>=5){t.five.t++; if(hit)t.five.h++;}
+    else if(p.stars===4){t.four.t++; if(hit)t.four.h++;}
+    else {t.three.t++; if(hit)t.three.h++;}
+  }
+  return t;
+}
+function betStats(){
+  let h=0,t=0,rows=[];
+  for(const p of DB.predictions) for(const b of (p.bets||[])){
+    if(b.result){t++; if(b.result==="HIT")h++; rows.push({match:p.match,...b});}
+  }
+  return {h,t,rows};
+}
+function edgeStats(){
+  const rows = DB.predictions.filter(p=>p.closing_odds&&p.final_prob);
+  let sum=0;
+  for(const r of rows){const mkt = r.market_prob ?? (100/r.closing_odds); sum += (r.final_prob-mkt);}
+  return {n:rows.length, avg:rows.length?(sum/rows.length):null};
+}
+function vDashboard(){
+  const t=tierStats(), bs=betStats(), es=edgeStats();
+  const pct=(h,tt)=>tt?Math.round(h/tt*100)+"%":"—";
+  const legacy = DB.settings.legacy_record||{};
+  const pending = DB.predictions.filter(p=>p.stage==="predicted"&&!p.outcome);
+  const watch = DB.predictions.filter(p=>p.lineup_watch&&!p.outcome);
+  const rules = DB.settings.hard_rules||[];
+  return `
+  <div class="grid cards">
+    ${card("5-6★ Record",pct(t.five.h,t.five.t),`${t.five.h}/${t.five.t} · bet with confidence`,t.five.h,t.five.t)}
+    ${card("4★ Record",pct(t.four.h,t.four.t),`${t.four.h}/${t.four.t} · standard bets`,t.four.h,t.four.t)}
+    ${card("AVOID Correct",pct(t.avoid.h,t.avoid.t),`${t.avoid.h}/${t.avoid.t} · discipline is a position`,t.avoid.h,t.avoid.t)}
+    ${card("Game-Script Bets",pct(bs.h,bs.t),`${bs.h}/${bs.t} · TMS supplementary markets`,bs.h,bs.t)}
+    ${card("Edge vs Market",es.avg==null?"—":(es.avg>0?"+":"")+es.avg.toFixed(1)+"pp",es.n?`${es.n} priced calls`:"log closing odds to measure")}
+  </div>
+  ${pending.length?`<div class="panel"><h2>Live Calls</h2><table><tr><th>Match</th><th>Pick</th><th>Prob</th><th>Stars</th><th></th></tr>${pending.map(p=>`<tr class="rowbtn" onclick="go('predictions')"><td>${esc(p.match)}</td><td><b>${esc(p.pick)}</b></td><td class="num">${p.final_prob}%</td><td class="stars">${starstr(p.stars)}</td><td>${p.lineup_watch?'<span class="tag watch">👁 LINEUP WATCH</span>':''}</td></tr>`).join("")}</table></div>`:""}
+  ${watch.length?`<div class="panel"><h2>⚠ Lineup Watch — no bets before confirmed XIs</h2>${watch.map(p=>`<div class="detail"><b>${esc(p.match)}</b> — ${esc(p.lineup_watch_note||"PRS 8+ player in doubt")}</div>`).join("")}</div>`:""}
+  <div class="panel"><h2>Legacy Record — ${esc(legacy.label||"PL/CL")}</h2>
+    <p class="muted small">${esc(legacy.note||"")}</p>
+    <p style="margin-top:8px" class="num">4★+ combined: <b>${legacy.four_plus?.hits||0}/${legacy.four_plus?.total||0}</b> (${pct(legacy.four_plus?.hits||0,legacy.four_plus?.total||0)})</p>
+  </div>
+  <div class="panel"><h2>Hard Rules — each one paid for with a loss</h2>
+    ${rules.map(r=>`<details class="rule"><summary>${esc(r.split("(")[0])}</summary><p class="muted small" style="padding:6px 0 2px">${esc(r)}</p></details>`).join("")}
+  </div>`;
+}
+function card(k,v,s,h,t){
+  const p = t?Math.round(h/t*100):0;
+  return `<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div>${t?`<div class="bar"><i style="width:${p}%"></i></div>`:""}</div>`;
+}
+
+/* ---------- PREDICTIONS ---------- */
+let showAddPred=false, expandId=null;
+function vPredictions(){
+  const rows = [...DB.predictions].sort((a,b)=>(b.entry_no||0)-(a.entry_no||0));
+  return `
+  <div class="flex"><h2 style="color:var(--accent);text-transform:uppercase;font-size:14px;letter-spacing:1px">Prediction Log — full audit trail</h2>
+  <button class="btn right" onclick="showAddPred=!showAddPred;render()">${showAddPred?"Cancel":"+ New Prediction"}</button></div>
+  ${showAddPred?predForm():""}
+  <div class="panel" style="padding:6px 10px"><table>
+  <tr><th>#</th><th>Date</th><th>Match</th><th>Comp</th><th>Pick</th><th>Prob</th><th>Stars</th><th>Script</th><th>Result</th><th>Outcome</th></tr>
+  ${rows.map(p=>`
+    <tr class="rowbtn" onclick="expandId=expandId===${p.id}?null:${p.id};render()">
+      <td class="num muted">${p.entry_no||""}</td><td class="num">${p.match_date||""}</td>
+      <td><b>${esc(p.match)}</b>${p.lineup_watch&&!p.outcome?' <span class="tag watch">👁</span>':''}</td>
+      <td class="muted small">${esc(p.competition)}</td>
+      <td>${p.is_avoid?'<span class="tag avoid">AVOID</span>':esc(p.pick||"—")}</td>
+      <td class="num">${p.final_prob!=null?p.final_prob+"%":"—"}</td>
+      <td class="stars">${starstr(p.stars)}</td>
+      <td class="small muted">${esc(p.game_script||"—")}</td>
+      <td class="num">${esc(p.result||"—")}</td>
+      <td>${outcomeTag(p.outcome)}</td>
+    </tr>
+    ${expandId===p.id?`<tr><td colspan="10">${predDetail(p)}</td></tr>`:""}
+  `).join("")}
+  </table></div>`;
+}
+function predDetail(p){
+  const ln = p.layer_notes||{};
+  const steps = [["Base",p.base_prob,ln.base],["PRS",p.prs_adj,ln.prs],["AIS",p.ais_adj,ln.ais],["TMS",p.tms_adj,ln.tms],["Context",p.context_adj,ln.context]];
+  return `<div class="detail" onclick="event.stopPropagation()">
+    <div class="layers">
+      ${steps.map(([k,v,n],i)=>`<div class="step" title="${esc(n||"")}"><div class="lk">${k}</div><div class="lv">${i===0?(v!=null?v+"%":"—"):(v?((v>0?"+":"")+v+"%"):"·")}</div></div><div class="arr">→</div>`).join("")}
+      <div class="step final"><div class="lk">Final</div><div class="lv">${p.final_prob!=null?p.final_prob+"%":"—"}</div></div>
+    </div>
+    ${Object.entries(ln).filter(([k,v])=>v).map(([k,v])=>`<p class="small"><b class="muted">${k.toUpperCase()}:</b> ${esc(v)}</p>`).join("")}
+    ${(p.bets||[]).length?`<p style="margin-top:8px"><b class="muted small">SUPPLEMENTARY BETS:</b></p><table>${p.bets.map(b=>`<tr><td>${esc(b.market)} — ${esc(b.pick)}</td><td class="num">${b.prob?b.prob+"%":""}</td><td>${b.result?outcomeTag(b.result):'<span class="tag pend">PENDING</span>'}</td></tr>`).join("")}</table>`:""}
+    ${p.closing_odds?`<p class="small" style="margin-top:8px"><b class="muted">CLOSING ODDS:</b> <span class="num">${p.closing_odds}</span> (market ${(p.market_prob??(100/p.closing_odds)).toFixed(1)}% vs our ${p.final_prob}%)</p>`:""}
+    ${p.audit_notes?`<p class="small" style="margin-top:8px"><b class="muted">AUDIT:</b> ${esc(p.audit_notes)}</p>`:""}
+    ${!p.outcome?`
+    <div class="formrow" style="margin-top:12px">
+      <label>Result (score)<input id="res_${p.id}" placeholder="e.g. Mexico 2-1"></label>
+      <label>Outcome<select id="out_${p.id}"><option>HIT</option><option>MISS</option><option>AVOID_CORRECT</option><option>AVOID_INCORRECT</option></select></label>
+      <label>Closing odds (decimal)<input id="odds_${p.id}" type="number" step="0.01" value="${p.closing_odds||""}"></label>
+      <label>Audit notes<input id="aud_${p.id}" style="width:260px"></label>
+      <button class="btn sm" onclick="settle(${p.id})">Settle</button>
+    </div>`:`<div class="formrow" style="margin-top:10px"><button class="btn ghost sm" onclick="delPred(${p.id})">Delete entry</button></div>`}
+  </div>`;
+}
+function predForm(){
+  return `<div class="panel"><h2>New Prediction</h2>
+  <div class="formrow">
+    <label>Entry #<input id="np_no" type="number" style="width:70px" value="${Math.max(0,...DB.predictions.map(p=>p.entry_no||0))+1}"></label>
+    <label>Match<input id="np_match" placeholder="Arsenal vs Man City" style="width:220px"></label>
+    <label>Competition<input id="np_comp" value="Premier League"></label>
+    <label>Date<input id="np_date" type="date"></label>
+    <label>Venue<input id="np_venue" list="venuelist"><datalist id="venuelist">${DB.venues.map(v=>`<option value="${esc(v.stadium)}">`).join("")}</datalist></label>
+  </div>
+  <div class="formrow">
+    <label>Pick<input id="np_pick" style="width:160px"></label>
+    <label>Base %<input id="np_base" type="number" style="width:80px"></label>
+    <label>PRS ±<input id="np_prs" type="number" style="width:70px" value="0"></label>
+    <label>AIS ±<input id="np_ais" type="number" style="width:70px" value="0"></label>
+    <label>TMS ±<input id="np_tms" type="number" style="width:70px" value="0"></label>
+    <label>Ctx ±<input id="np_ctx" type="number" style="width:70px" value="0"></label>
+    <label>Stars<select id="np_stars"><option>6</option><option>5</option><option selected>4</option><option>3</option><option>2</option><option>1</option></select></label>
+    <label>Script<select id="np_script"><option value="">—</option><option>A SIEGE</option><option>B OPEN EXCHANGE</option><option>C MIRROR</option><option>D WING OVERLOAD</option><option>E PRESS TRAP</option></select></label>
+    <label><span>AVOID call</span><input id="np_avoid" type="checkbox" style="width:20px;height:20px"></label>
+  </div>
+  <div class="formrow">
+    <label><span>Lineup watch</span><input id="np_watch" type="checkbox" style="width:20px;height:20px"></label>
+    <label>Watch note<input id="np_watchnote" style="width:280px" placeholder="PRS 8+ in doubt — who?"></label>
+    <label>Layer notes (base|prs|ais|tms|context)<input id="np_notes" style="width:340px" placeholder="freetext or leave blank"></label>
+    <button class="btn" onclick="addPred()">Save</button>
+  </div>
+  <p class="small muted">Final % auto-computes: base + PRS (cap ±15) + AIS + TMS (cap ±6) + context.</p></div>`;
+}
+const cap=(v,c)=>Math.max(-c,Math.min(c,v||0));
+async function addPred(){
+  const g=id=>document.getElementById(id);
+  const base=+g("np_base").value||null;
+  const prs=cap(+g("np_prs").value,15), ais=+g("np_ais").value||0, tms=cap(+g("np_tms").value,6), ctx=+g("np_ctx").value||0;
+  const body={entry_no:+g("np_no").value||null, match:g("np_match").value, competition:g("np_comp").value, match_date:g("np_date").value||null,
+    venue:g("np_venue").value||null, stage:"predicted", pick:g("np_pick").value||null, base_prob:base, prs_adj:prs, ais_adj:ais, tms_adj:tms, context_adj:ctx,
+    final_prob:base!=null?Math.round(base+prs+ais+tms+ctx):null, stars:+g("np_stars").value, game_script:g("np_script").value||null,
+    is_avoid:g("np_avoid").checked, lineup_watch:g("np_watch").checked, lineup_watch_note:g("np_watchnote").value||null,
+    layer_notes:g("np_notes").value?{note:g("np_notes").value}:{}};
+  if(!body.match) return toast("Match required",false);
+  try{await api("predictions",{method:"POST",body}); showAddPred=false; toast("Prediction logged"); loadAll();}catch(e){toast(e.message,false)}
+}
+async function settle(id){
+  const g=k=>document.getElementById(k+"_"+id).value;
+  const odds=+g("odds")||null;
+  const body={result:g("res")||null, outcome:g("out"), audit_notes:g("aud")||null, stage:"settled", closing_odds:odds, market_prob:odds?+(100/odds).toFixed(1):null};
+  try{await api("predictions?id=eq."+id,{method:"PATCH",body}); toast("Settled"); loadAll();}catch(e){toast(e.message,false)}
+}
+async function delPred(id){ if(!confirm("Delete this entry?"))return; try{await api("predictions?id=eq."+id,{method:"DELETE"}); expandId=null; toast("Deleted"); loadAll();}catch(e){toast(e.message,false)} }
+
+/* ---------- FIXTURES ---------- */
+let showAddNews=false;
+function vFixtures(){
+  const up = DB.predictions.filter(p=>!p.outcome);
+  return `
+  <div class="grid cards">
+    ${card("Open calls",up.length,"unsettled predictions")}
+    ${card("Lineup watches",up.filter(p=>p.lineup_watch).length,"waiting on confirmed XIs")}
+  </div>
+  <div class="panel"><h2>Upcoming / Unsettled</h2>
+  ${up.length?`<table><tr><th>Date</th><th>Match</th><th>Venue</th><th>Pick</th><th>Stars</th><th>Status</th></tr>
+  ${up.map(p=>`<tr><td class="num">${p.match_date||"—"}</td><td><b>${esc(p.match)}</b></td><td class="muted">${esc(p.venue||"—")}</td><td>${p.is_avoid?'<span class="tag avoid">AVOID</span>':esc(p.pick||"not called yet")}</td><td class="stars">${starstr(p.stars)}</td>
+  <td>${p.lineup_watch?`<span class="tag watch">👁 LINEUP WATCH</span> <span class="small muted">${esc(p.lineup_watch_note||"")}</span>`:'<span class="tag pend">OPEN</span>'}</td></tr>`).join("")}</table>`:'<p class="muted">No open fixtures. Add one from the Prediction Log tab (it can start with no pick).</p>'}
+  </div>
+  <div class="panel"><div class="flex"><h2>News Feed</h2><button class="btn sm right" onclick="showAddNews=!showAddNews;render()">${showAddNews?"Cancel":"+ Add item"}</button></div>
+  ${showAddNews?`<div class="formrow">
+    <label>Date<input id="nw_date" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
+    <label>Tag<select id="nw_tag"><option>injury</option><option>lineup</option><option>presser</option><option>other</option></select></label>
+    <label>Attach to match<select id="nw_pred"><option value="">—</option>${up.map(p=>`<option value="${p.id}">${esc(p.match)}</option>`).join("")}</select></label>
+    <label>Headline<input id="nw_head" style="width:300px"></label>
+    <label>Detail<input id="nw_body" style="width:300px"></label>
+    <button class="btn sm" onclick="addNews()">Save</button></div>`:""}
+  ${DB.news.length?DB.news.map(n=>{const p=DB.predictions.find(x=>x.id===n.prediction_id);return `<div class="detail"><span class="tag ${n.tag==='injury'?'miss':n.tag==='lineup'?'watch':'pend'}">${esc(n.tag||"note")}</span> <b>${esc(n.headline)}</b> <span class="muted small">${n.item_date||""}${p?" · "+esc(p.match):""}</span>${n.body?`<p class="small muted" style="margin-top:4px">${esc(n.body)}</p>`:""} <button class="btn ghost sm" style="float:right" onclick="delNews(${n.id})">✕</button></div>`}).join(""):'<p class="muted">No news items yet. Injury news, lineup confirmations, presser notes — tagged to matches.</p>'}
+  </div>`;
+}
+async function addNews(){
+  const g=id=>document.getElementById(id);
+  const body={item_date:g("nw_date").value,tag:g("nw_tag").value,headline:g("nw_head").value,body:g("nw_body").value||null,prediction_id:g("nw_pred").value?+g("nw_pred").value:null};
+  if(!body.headline)return toast("Headline required",false);
+  try{await api("news_items",{method:"POST",body});showAddNews=false;toast("Added");loadAll();}catch(e){toast(e.message,false)}
+}
+async function delNews(id){try{await api("news_items?id=eq."+id,{method:"DELETE"});loadAll();}catch(e){toast(e.message,false)}}
+
+/* ---------- PLAYERS ---------- */
+let playerFilter="", showAddPlayer=false, sortKey="prs";
+function vPlayers(){
+  const teams=[...new Set(DB.players.map(p=>p.team))].sort();
+  let rows=DB.players.filter(p=>!playerFilter||p.team===playerFilter);
+  rows.sort((a,b)=>sortKey==="prs"?b.prs-a.prs:String(a[sortKey]||"").localeCompare(String(b[sortKey]||"")));
+  const scale=DB.settings.prs_scale||[];
+  return `
+  <div class="flex">
+    <select onchange="playerFilter=this.value;render()"><option value="">All teams</option>${teams.map(t=>`<option ${playerFilter===t?"selected":""}>${esc(t)}</option>`).join("")}</select>
+    <button class="btn right" onclick="showAddPlayer=!showAddPlayer;render()">${showAddPlayer?"Cancel":"+ Add Player"}</button>
+  </div>
+  ${showAddPlayer?`<div class="panel"><div class="formrow">
+    <label>Name<input id="pl_name"></label><label>Team<input id="pl_team" list="teamlist"><datalist id="teamlist">${teams.map(t=>`<option value="${esc(t)}">`).join("")}</datalist></label>
+    <label>Pos<input id="pl_pos" style="width:70px"></label>
+    <label>PRS<select id="pl_prs">${[10,9,8,7,6,5,4,3,2,1].map(n=>`<option>${n}</option>`).join("")}</select></label>
+    <label>Status<select id="pl_status"><option>fit</option><option>injured</option><option>doubt</option><option>suspended</option><option>bench-only</option></select></label>
+    <label><span>Pen taker</span><input type="checkbox" id="pl_pen" style="width:20px;height:20px"></label>
+    <label><span>Hot streak</span><input type="checkbox" id="pl_hot" style="width:20px;height:20px"></label>
+    <label>Notes<input id="pl_notes" style="width:260px"></label>
+    <button class="btn sm" onclick="addPlayer()">Save</button></div></div>`:""}
+  <div class="panel" style="padding:6px 10px"><table>
+    <tr><th onclick="sortKey='name';render()">Player</th><th onclick="sortKey='team';render()">Team</th><th>Pos</th><th onclick="sortKey='prs';render()">PRS ▾</th><th>Impact if absent</th><th>Status</th><th>Modifiers</th><th>Notes</th><th></th></tr>
+    ${rows.map(p=>{
+      const tier=scale.find(s=>s.prs===Math.min(p.prs,10))||scale.find(s=>s.prs===4);
+      const effPrs = p.hot_streak&&p.prs===10?"11":p.prs;
+      return `<tr>
+      <td><b>${esc(p.name)}</b></td><td>${esc(p.team)}</td><td class="muted">${esc(p.position||"")}</td>
+      <td><span class="num" style="color:${p.prs>=9?'var(--red)':p.prs>=7?'var(--accent)':'var(--text)'};font-weight:700">${effPrs}</span>${p.hot_streak?' 🔥':''}</td>
+      <td class="small muted">${tier?esc(tier.impact):""}${p.hot_streak&&p.prs===10?' → -12% facing':''}</td>
+      <td><select onchange="patchPlayer(${p.id},{status:this.value,fitness_pct:null})">${["fit","injured","doubt","suspended","bench-only"].map(s=>`<option ${p.status===s?"selected":""}>${s}</option>`).join("")}</select></td>
+      <td class="small">${p.penalty_taker?'<span class="tag pend">PEN</span> ':''}${p.set_piece_taker?'<span class="tag pend">SP</span> ':''}${p.hot_streak?`<span class="tag watch" title="${esc(p.streak_note||"")}">STREAK</span>`:''}</td>
+      <td class="small muted" style="max-width:280px">${esc(p.notes||"")}</td>
+      <td><button class="btn ghost sm" onclick="delPlayer(${p.id})">✕</button></td></tr>`}).join("")}
+  </table></div>
+  <div class="panel"><h2>PRS Scale</h2><table><tr><th>PRS</th><th>Tier</th><th>Win % impact when absent</th></tr>
+  ${scale.map(s=>`<tr><td class="num">${s.prs}${s.prs===4?" or less":""}</td><td>${esc(s.tier)}</td><td class="num">${esc(s.impact)}</td></tr>`).join("")}</table>
+  <p class="small muted" style="margin-top:8px">Modifiers: partial fitness = fraction of penalty · bench-only ≈ half value · role cascade (losing top-2 pen takers = extra -1 to -2%) · hot streak (PRS 10 + 8-game scoring run → treat as PRS 11) · elite depth absorbs +2-3%.</p></div>`;
+}
+async function addPlayer(){
+  const g=id=>document.getElementById(id);
+  const body={name:g("pl_name").value,team:g("pl_team").value,position:g("pl_pos").value||null,prs:+g("pl_prs").value,status:g("pl_status").value,penalty_taker:g("pl_pen").checked,hot_streak:g("pl_hot").checked,notes:g("pl_notes").value||null};
+  if(!body.name||!body.team)return toast("Name and team required",false);
+  try{await api("players",{method:"POST",body});showAddPlayer=false;toast("Player added");loadAll();}catch(e){toast(e.message,false)}
+}
+async function patchPlayer(id,body){try{await api("players?id=eq."+id,{method:"PATCH",body});toast("Updated");loadAll();}catch(e){toast(e.message,false)}}
+async function delPlayer(id){if(!confirm("Delete player?"))return;try{await api("players?id=eq."+id,{method:"DELETE"});loadAll();}catch(e){toast(e.message,false)}}
+
+/* ---------- COACHES ---------- */
+let showAddCoach=false;
+function vCoaches(){
+  const axis=v=>v==null?'<span class="muted">—</span>':`<span class="num">${v}</span><div class="bar" style="width:60px"><i style="width:${v*10}%;background:var(--blue)"></i></div>`;
+  return `
+  <div class="flex"><h2 style="color:var(--accent);font-size:14px;text-transform:uppercase;letter-spacing:1px">Coach Profiles — TMS axes (1-10)</h2>
+  <button class="btn right" onclick="showAddCoach=!showAddCoach;render()">${showAddCoach?"Cancel":"+ Add Coach"}</button></div>
+  ${showAddCoach?`<div class="panel"><div class="formrow">
+    <label>Name<input id="co_name"></label><label>Team<input id="co_team"></label><label>Formations<input id="co_form" placeholder="4-3-3 / 4-2-3-1"></label>
+    <label>PRESS<input id="co_press" type="number" min="1" max="10" style="width:60px"></label>
+    <label>POSS<input id="co_poss" type="number" min="1" max="10" style="width:60px"></label>
+    <label>RISK<input id="co_risk" type="number" min="1" max="10" style="width:60px"></label>
+    <label>ADAPT<input id="co_adapt" type="number" min="1" max="10" style="width:60px"></label>
+    <label>Notes<input id="co_notes" style="width:240px"></label>
+    <button class="btn sm" onclick="addCoach()">Save</button></div></div>`:""}
+  <div class="panel" style="padding:6px 10px"><table>
+  <tr><th>Coach</th><th>Team</th><th>Formations</th><th>Press</th><th>Poss</th><th>Risk</th><th>Adapt</th><th>Notes</th><th></th></tr>
+  ${DB.coaches.map(c=>`<tr><td><b>${esc(c.name)}</b></td><td>${esc(c.team)}</td><td class="muted">${esc(c.formations||"—")}</td>
+  <td>${axis(c.press)}</td><td>${axis(c.poss)}</td><td>${axis(c.risk)}</td><td>${axis(c.adapt)}</td>
+  <td class="small muted" style="max-width:260px">${esc(c.notes||"")}</td><td><button class="btn ghost sm" onclick="delCoach(${c.id})">✕</button></td></tr>`).join("")}
+  </table></div>
+  <div class="panel"><h2>The Five Game Scripts</h2><table><tr><th>Script</th><th>Typical pairing</th><th>Favorite effect</th><th>Goals lean</th></tr>
+  ${(DB.settings.game_scripts||[]).map(s=>`<tr><td><b>${s.code}. ${esc(s.name)}</b></td><td>${esc(s.pairing)}</td><td>${esc(s.favorite_effect)}</td><td>${esc(s.goals_lean)}</td></tr>`).join("")}</table>
+  <p class="small muted" style="margin-top:8px">Script A (SIEGE) is the #1 upset/draw enabler in knockouts — favorites vs low blocks are systematically overpriced. TMS capped at ±6%.</p></div>`;
+}
+async function addCoach(){
+  const g=id=>document.getElementById(id);
+  const body={name:g("co_name").value,team:g("co_team").value,formations:g("co_form").value||null,press:+g("co_press").value||null,poss:+g("co_poss").value||null,risk:+g("co_risk").value||null,adapt:+g("co_adapt").value||null,notes:g("co_notes").value||null};
+  if(!body.name||!body.team)return toast("Name and team required",false);
+  try{await api("coaches",{method:"POST",body});showAddCoach=false;toast("Coach added");loadAll();}catch(e){toast(e.message,false)}
+}
+async function delCoach(id){if(!confirm("Delete coach?"))return;try{await api("coaches?id=eq."+id,{method:"DELETE"});loadAll();}catch(e){toast(e.message,false)}}
+
+/* ---------- VENUES ---------- */
+let showAddVenue=false;
+function vVenues(){
+  return `
+  <div class="flex"><h2 style="color:var(--accent);font-size:14px;text-transform:uppercase;letter-spacing:1px">Venues — AIS altitude layer</h2>
+  <button class="btn right" onclick="showAddVenue=!showAddVenue;render()">${showAddVenue?"Cancel":"+ Add Venue"}</button></div>
+  ${showAddVenue?`<div class="panel"><div class="formrow">
+    <label>Stadium<input id="ve_name"></label><label>City<input id="ve_city"></label><label>Country<input id="ve_country"></label>
+    <label>Altitude (m)<input id="ve_alt" type="number" style="width:90px" value="0"></label>
+    <label><span>New stadium</span><input type="checkbox" id="ve_new" style="width:20px;height:20px"></label>
+    <label>Notes<input id="ve_notes" style="width:240px"></label>
+    <button class="btn sm" onclick="addVenue()">Save</button></div></div>`:""}
+  <div class="panel" style="padding:6px 10px"><table>
+  <tr><th>Stadium</th><th>Location</th><th>Altitude</th><th>Goal adv vs sea level</th><th>Win prob swing</th><th>Flags</th><th>Notes</th><th></th></tr>
+  ${DB.venues.map(v=>{
+    const ga=(v.altitude_m/1000*0.5), swing=ga*11;
+    return `<tr><td><b>${esc(v.stadium)}</b></td><td class="muted">${esc(v.city||"")}${v.country?", "+esc(v.country):""}</td>
+    <td class="num">${v.altitude_m}m</td>
+    <td class="num">${ga>=0.1?"+"+ga.toFixed(2)+" goals":'<span class="muted">negligible</span>'}</td>
+    <td class="num">${ga>=0.1?"~+"+Math.round(swing)+"%":'<span class="muted">—</span>'}</td>
+    <td>${v.new_stadium?'<span class="tag watch">NEW (-3 to -5% visitors)</span>':''}</td>
+    <td class="small muted" style="max-width:280px">${esc(v.notes||"")}</td>
+    <td><button class="btn ghost sm" onclick="delVenue(${v.id})">✕</button></td></tr>`}).join("")}
+  </table></div>
+  <div class="panel"><h2>AIS Formula (McSharry, BMJ — 1,460 matches)</h2>
+  <p class="num" style="background:#0f1420;padding:12px;border-radius:8px">altitude gap (m) ÷ 1,000 × 0.5 = goal advantage &nbsp;·&nbsp; 1 goal ≈ 10-12% win prob swing</p>
+  <p class="small muted" style="margin-top:8px">Time curve: impact compounds after minute 60 (visitor pressing/sprint recovery collapses 60-75'). Reversal: advantage is venue-specific — a high-altitude team playing at sea level loses it entirely, with a small re-acclimatization penalty. Hard Rule 8: never bet against a large altitude advantage in knockouts unless the quality gap is extreme.</p></div>`;
+}
+async function addVenue(){
+  const g=id=>document.getElementById(id);
+  const body={stadium:g("ve_name").value,city:g("ve_city").value||null,country:g("ve_country").value||null,altitude_m:+g("ve_alt").value||0,new_stadium:g("ve_new").checked,notes:g("ve_notes").value||null};
+  if(!body.stadium)return toast("Stadium required",false);
+  try{await api("venues",{method:"POST",body});showAddVenue=false;toast("Venue added");loadAll();}catch(e){toast(e.message,false)}
+}
+async function delVenue(id){if(!confirm("Delete venue?"))return;try{await api("venues?id=eq."+id,{method:"DELETE"});loadAll();}catch(e){toast(e.message,false)}}
+
+/* ---------- CALCULATOR ---------- */
+function vCalc(){
+  return `
+  <div class="panel"><h2>Pipeline Calculator — base → PRS → AIS → TMS → context</h2>
+  <div class="formrow">
+    <label>Base probability %<input id="c_base" type="number" value="50" style="width:90px" oninput="calc()"></label>
+    <label>PRS adjustment % (cap ±15)<input id="c_prs" type="number" value="0" style="width:90px" oninput="calc()"></label>
+    <label>TMS adjustment % (cap ±6)<input id="c_tms" type="number" value="0" style="width:90px" oninput="calc()"></label>
+    <label>Context % <input id="c_ctx" type="number" value="0" style="width:90px" oninput="calc()"></label>
+  </div>
+  <div class="formrow">
+    <label>Home venue altitude (m)<input id="c_alt1" type="number" value="0" style="width:100px" oninput="calc()"></label>
+    <label>Visitor origin altitude (m)<input id="c_alt2" type="number" value="0" style="width:100px" oninput="calc()"></label>
+    <label>Is your pick the high-altitude side?<select id="c_side" onchange="calc()"><option value="1">Yes (+)</option><option value="-1">No (−)</option><option value="0">No altitude factor</option></select></label>
+    <label><span>PRS 8+ in doubt?</span><input type="checkbox" id="c_doubt" style="width:20px;height:20px" onchange="calc()"></label>
+  </div>
+  <div class="calcout" id="c_out"></div>
+  <p class="small muted" style="margin-top:10px">Stars auto-suggest from the final number. The lineup rule overrides everything: unresolved PRS 8+ doubt = AVOID until confirmed XIs, no exceptions.</p>
+  </div>`;
+}
+function calc(){
+  const g=id=>+document.getElementById(id).value||0;
+  const base=g("c_base"), prs=cap(g("c_prs"),15), tms=cap(g("c_tms"),6), ctx=g("c_ctx");
+  const side=+document.getElementById("c_side").value;
+  const gap=Math.max(0,g("c_alt1")-g("c_alt2"));
+  const goals=gap/1000*0.5, ais=side===0?0:Math.round(goals*11)*side;
+  const final=Math.round(base+prs+ais+tms+ctx);
+  const doubt=document.getElementById("c_doubt").checked;
+  let stars,action;
+  if(doubt){stars="⭐⭐";action="🚫 AVOID — PRS 8+ doubt unresolved. Wait for confirmed lineups (Rodri rule).";}
+  else if(final>=65){stars="⭐⭐⭐⭐⭐";action="Bet with confidence";}
+  else if(final>=50){stars="⭐⭐⭐⭐";action="Standard bet";}
+  else if(final>=45){stars="⭐⭐⭐";action="Goals markets only / small";}
+  else {stars="⭐⭐";action="🚫 AVOID — below threshold";}
+  document.getElementById("c_out").innerHTML=`
+    <div class="layers" style="justify-content:center">
+      <div class="step"><div class="lk">Base</div><div class="lv">${base}%</div></div><div class="arr">→</div>
+      <div class="step"><div class="lk">PRS</div><div class="lv">${prs>0?"+":""}${prs}%</div></div><div class="arr">→</div>
+      <div class="step"><div class="lk">AIS</div><div class="lv">${ais>0?"+":""}${ais}%${gap>0&&side!==0?`<div class="small muted">${goals.toFixed(2)} goals</div>`:""}</div></div><div class="arr">→</div>
+      <div class="step"><div class="lk">TMS</div><div class="lv">${tms>0?"+":""}${tms}%</div></div><div class="arr">→</div>
+      <div class="step"><div class="lk">Ctx</div><div class="lv">${ctx>0?"+":""}${ctx}%</div></div>
+    </div>
+    <div class="big">${final}%</div>
+    <div class="stars" style="font-size:22px">${stars}</div>
+    <div style="margin-top:6px;font-weight:700;color:${action.startsWith("🚫")?"var(--red)":"var(--green)"}">${action}</div>`;
+}
+
+/* ---------- IMPORT / EXPORT ---------- */
+const IMPORT_SPEC = {
+  version: 1,
+  predictions: [{entry_no:26, match:"Team A vs Team B", competition:"Premier League", match_date:"2026-08-15", venue:"Anfield", stage:"predicted", pick:"Team A", base_prob:55, prs_adj:-4, ais_adj:0, tms_adj:3, context_adj:1, final_prob:55, stars:4, game_script:"B OPEN EXCHANGE", bets:[{market:"BTTS",pick:"Yes",prob:60}], is_avoid:false, lineup_watch:true, lineup_watch_note:"Player X (PRS 9) doubtful", layer_notes:{prs:"X doubtful -4%",tms:"open exchange +3%"}}],
+  settle: [{entry_no:25, result:"Mexico 2-1", outcome:"HIT", audit_notes:"", closing_odds:2.4}],
+  players: [{name:"Player", team:"Team", position:"ST", prs:8, status:"fit", fitness_pct:null, hot_streak:false, penalty_taker:false, set_piece_taker:false, notes:""}],
+  coaches: [{name:"Coach", team:"Team", formations:"4-3-3", press:8, poss:7, risk:6, adapt:5, notes:""}],
+  venues: [{stadium:"Stadium", city:"City", country:"Country", altitude_m:0, new_stadium:false, notes:""}],
+  news: [{item_date:"2026-08-14", tag:"injury", headline:"...", body:"", match:"Team A vs Team B"}]
+};
+function vData(){
+  return `
+  <div class="panel"><h2>Paste-in JSON Import</h2>
+  <p class="small muted" style="margin-bottom:8px">End an analysis session by asking Claude for an "import block" in the Hub format. Paste it here — predictions insert, entries settle by entry_no, players/coaches/venues upsert by name+team.</p>
+  <textarea id="imp" rows="12" placeholder='{"version":1,"predictions":[...],"players":[...]}'></textarea>
+  <div class="flex" style="margin-top:10px"><button class="btn" onclick="runImport()">Import</button>
+  <button class="btn ghost" onclick="document.getElementById('imp').value=JSON.stringify(IMPORT_SPEC,null,2)">Show format example</button></div>
+  <div id="impres" class="small" style="margin-top:8px"></div></div>
+
+  <div class="panel"><h2>Session Briefing Export</h2>
+  <p class="small muted" style="margin-bottom:8px">One click → a context block to paste into a new Claude session. Includes current record, open calls, lineup watches, PRS notables, hard rules, and the import format so the session can emit updates back.</p>
+  <div class="flex"><button class="btn" onclick="briefing()">Generate briefing</button><button class="btn ghost" onclick="copyBrief()">Copy to clipboard</button></div>
+  <textarea id="brief" rows="16" style="margin-top:10px"></textarea></div>
+
+  <div class="panel"><h2>Full Backup</h2>
+  <div class="flex"><button class="btn ghost" onclick="backup()">Download full JSON backup</button></div></div>`;
+}
+async function runImport(){
+  let d; const out=document.getElementById("impres");
+  try{d=JSON.parse(document.getElementById("imp").value);}catch(e){out.innerHTML='<span class="neg">Invalid JSON: '+esc(e.message)+'</span>';return;}
+  const log=[];
+  try{
+    if(d.predictions?.length){await api("predictions",{method:"POST",body:d.predictions});log.push(d.predictions.length+" predictions added");}
+    if(d.settle?.length){for(const s of d.settle){const{entry_no,...rest}=s; if(rest.closing_odds&&!rest.market_prob)rest.market_prob=+(100/rest.closing_odds).toFixed(1); rest.stage="settled"; await api("predictions?entry_no=eq."+entry_no,{method:"PATCH",body:rest});} log.push(d.settle.length+" entries settled");}
+    if(d.players?.length){await api("players?on_conflict=name,team",{method:"POST",headers:{Prefer:"resolution=merge-duplicates"},body:d.players});log.push(d.players.length+" players upserted");}
+    if(d.coaches?.length){await api("coaches?on_conflict=name,team",{method:"POST",headers:{Prefer:"resolution=merge-duplicates"},body:d.coaches});log.push(d.coaches.length+" coaches upserted");}
+    if(d.venues?.length){await api("venues?on_conflict=stadium",{method:"POST",headers:{Prefer:"resolution=merge-duplicates"},body:d.venues});log.push(d.venues.length+" venues upserted");}
+    if(d.news?.length){for(const n of d.news){const{match,...rest}=n; const p=DB.predictions.find(x=>x.match===match); if(p)rest.prediction_id=p.id; await api("news_items",{method:"POST",body:rest});} log.push(d.news.length+" news items added");}
+    if(d.teams?.length){await api("teams?on_conflict=name",{method:"POST",headers:{Prefer:"resolution=merge-duplicates"},body:d.teams});log.push(d.teams.length+" teams upserted");}
+    out.innerHTML='<span class="pos">✓ '+log.join(" · ")+'</span>'; toast("Import complete"); loadAll();
+  }catch(e){out.innerHTML='<span class="neg">Import failed: '+esc(e.message)+'</span>';}
+}
+function briefing(){
+  const t=tierStats(),bs=betStats();
+  const pct=(h,tt)=>tt?Math.round(h/tt*100)+"%":"n/a";
+  const open=DB.predictions.filter(p=>!p.outcome);
+  const notable=DB.players.filter(p=>p.prs>=8||p.status!=="fit"||p.hot_streak);
+  const lines=[
+    "# FOOTBALL PREDICTION SYSTEM — SESSION BRIEFING",
+    "Generated "+new Date().toISOString().slice(0,10)+" from the Hub. This is the current system state; use it as full context.",
+    "",
+    "## Record",
+    `- 5-6★: ${t.five.h}/${t.five.t} (${pct(t.five.h,t.five.t)}) · 4★: ${t.four.h}/${t.four.t} (${pct(t.four.h,t.four.t)}) · AVOID correct: ${t.avoid.h}/${t.avoid.t} · game-script bets: ${bs.h}/${bs.t}`,
+    "",
+    "## Open calls",
+    ...(open.length?open.map(p=>`- [#${p.entry_no}] ${p.match} (${p.match_date||"TBD"})${p.pick?` — pick ${p.pick} ${p.final_prob}% ${"★".repeat(p.stars||0)}`:" — no call yet"}${p.lineup_watch?` — 👁 LINEUP WATCH: ${p.lineup_watch_note||"PRS 8+ doubt"}`:""}`):["- none"]),
+    "",
+    "## PRS notables (8+, non-fit, or streaking)",
+    ...(notable.length?notable.map(p=>`- ${p.name} (${p.team}, ${p.position||"?"}) PRS ${p.prs}${p.hot_streak?" 🔥HOT-STREAK→11":""} — ${p.status}${p.penalty_taker?", pen taker":""}${p.notes?" — "+p.notes:""}`):["- none"]),
+    "",
+    "## Hard rules",
+    ...(DB.settings.hard_rules||[]).map(r=>"- "+r),
+    "",
+    "## Pipeline",
+    "Base → PRS (±15 cap) → AIS (alt gap m ÷1000 ×0.5 goals; 1 goal ≈ 10-12%) → TMS (±6 cap) → context = final. 65%+ = 5★ bet · 50-65% = 4★ · coin-flip = 3★ goals only · below/PRS-doubt = AVOID.",
+    "",
+    "## How to send updates back to the Hub",
+    "End the session by outputting an import block (JSON) in exactly this shape; I will paste it into the Hub:",
+    "```json",
+    JSON.stringify(IMPORT_SPEC,null,1),
+    "```"
+  ];
+  document.getElementById("brief").value=lines.join("\n");
+}
+function copyBrief(){const b=document.getElementById("brief");if(!b.value)briefing();b.select();navigator.clipboard.writeText(b.value).then(()=>toast("Briefing copied"));}
+function backup(){
+  const blob=new Blob([JSON.stringify(DB,null,2)],{type:"application/json"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="prediction-hub-backup-"+new Date().toISOString().slice(0,10)+".json";a.click();
+}
+
+/* ---------- INIT ---------- */
+window.addEventListener("hashchange",()=>{TAB=location.hash.replace("#","")||"dashboard";render();});
+loadAll().then(()=>{if(TAB==="calculator")calc();}).catch(e=>{document.getElementById("main").innerHTML='<div class="panel"><h2>Connection error</h2><p class="muted">'+esc(e.message)+'</p></div>';});
+const _origRender=render; render=function(){_origRender(); if(TAB==="calculator")setTimeout(calc,0);};
+</script>
+</body>
+</html>
