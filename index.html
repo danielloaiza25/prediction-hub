@@ -140,7 +140,7 @@ function render(){
   if(TAB==="dashboard") m.innerHTML=vDashboard();
   else if(TAB==="predictions") m.innerHTML=vPredictions();
   else if(TAB==="fixtures") m.innerHTML=vFixtures();
-  else if(TAB==="pltable") m.innerHTML=vPLTable();
+  else if(TAB==="pltable"){renderPLTable();return;}
   else if(TAB==="players") m.innerHTML=vPlayers();
   else if(TAB==="coaches") m.innerHTML=vCoaches();
   else if(TAB==="venues") m.innerHTML=vVenues();
@@ -427,22 +427,170 @@ async function addNews(){
 }
 async function delNews(id){try{await api("news_items?id=eq."+id,{method:"DELETE"});loadAll();}catch(e){toast(e.message,false)}}
 
-/* ---------- PL TABLE ---------- */
-function vPLTable(){
-  const rows=plTable();
-  if(!rows.length||!rows.some(r=>r.p>0)) return plBanner()+`<div class="panel"><h2>League Table</h2><p class="muted">No finished matches yet this season — the table builds itself as results come in.</p></div>`;
+/* ---------- PL TABLE + TEAM PROFILES ---------- */
+let plSeason=null, profileTeam=null, HIST=null, PROFILES={};
+const SEASON_LIVE = () => { const st=DB.plstate; return (st && !st.season_over && st.current_gw!=null) ? st.season : null; };
+async function ensureHist(){ if(!HIST) HIST = await api("pl_history?select=season,match_date,home,away,fthg,ftag,hthg,htag&order=match_date.asc&limit=4000"); }
+async function ensureProfiles(team){ if(!PROFILES[team]) PROFILES[team] = await api("team_profiles?team=eq."+encodeURIComponent(team)+"&order=season.asc"); }
+function seasonList(){
+  const set=new Set(HIST?HIST.map(m=>m.season):[]);
+  const live=SEASON_LIVE(); if(live) set.add(live);
+  return [...set].sort().reverse();
+}
+function matchesFor(season){
+  const live=SEASON_LIVE();
+  if(season===live) return DB.plf.filter(f=>f.finished&&f.team_h_name).map(f=>({season,home:f.team_h_name,away:f.team_a_name,fthg:f.team_h_score,ftag:f.team_a_score,match_date:f.kickoff?f.kickoff.slice(0,10):null,hthg:null,htag:null}));
+  return (HIST||[]).filter(m=>m.season===season);
+}
+function tableFrom(ms){
+  const t={};
+  const touch=n=>t[n]||(t[n]={team:n,p:0,w:0,d:0,l:0,gf:0,ga:0,cs:0,pts:0,form:[],hw:0,hd:0,hl:0,aw:0,ad:0,al:0});
+  const sorted=[...ms].filter(f=>f.fthg!=null).sort((a,b)=>String(a.match_date).localeCompare(String(b.match_date)));
+  for(const f of sorted){
+    const h=touch(f.home),a=touch(f.away);
+    h.p++;a.p++;h.gf+=f.fthg;h.ga+=f.ftag;a.gf+=f.ftag;a.ga+=f.fthg;
+    if(f.ftag===0)h.cs++; if(f.fthg===0)a.cs++;
+    if(f.fthg>f.ftag){h.w++;h.hw++;a.l++;a.al++;h.pts+=3;h.form.push("W");a.form.push("L");}
+    else if(f.fthg<f.ftag){a.w++;a.aw++;h.l++;h.hl++;a.pts+=3;a.form.push("W");h.form.push("L");}
+    else{h.d++;h.hd++;a.d++;a.ad++;h.pts++;a.pts++;h.form.push("D");a.form.push("D");}
+  }
+  return Object.values(t).sort((x,y)=>y.pts-x.pts||(y.gf-y.ga)-(x.gf-x.ga)||y.gf-x.gf);
+}
+async function renderPLTable(){
+  const m=document.getElementById("main");
+  m.innerHTML=plBanner()+'<div class="panel"><p class="muted">Loading league data…</p></div>';
+  try{
+    await ensureHist();
+    if(!plSeason) plSeason = SEASON_LIVE() || seasonList()[0];
+    if(profileTeam) await ensureProfiles(profileTeam);
+    m.innerHTML = profileTeam ? vProfile() : vTable();
+  }catch(e){ m.innerHTML = plBanner()+'<div class="panel"><p class="neg">Failed to load: '+esc(e.message)+'</p></div>'; }
+  window.scrollTo(0,0);
+}
+function openProfile(t){ profileTeam=t; renderPLTable(); }
+function closeProfile(){ profileTeam=null; renderPLTable(); }
+function setPlSeason(v){ plSeason=v; renderPLTable(); }
+function vTable(){
+  const rows=tableFrom(matchesFor(plSeason));
+  const opts=seasonList().map(s2=>`<option ${s2===plSeason?"selected":""}>${s2}${s2===SEASON_LIVE()?" · live":""}</option>`).join("");
   return plBanner()+`
-  <div class="panel" style="padding:6px 10px"><table>
+  <div class="panel" style="padding:6px 10px">
+  <div class="flex" style="padding:10px 6px"><h2 style="margin:0">League Table — ${esc(plSeason||"")}</h2>
+  <select class="right" onchange="setPlSeason(this.value)">${opts}</select></div>
+  ${rows.length?`<table>
   <tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>CS</th><th>Pts</th><th>Home</th><th>Away</th><th>Form (last 5)</th></tr>
-  ${rows.map((r,i)=>`<tr>
-    <td class="num muted">${i+1}</td><td><b>${esc(r.team)}</b></td>
+  ${rows.map((r,i)=>`<tr class="rowbtn" onclick="openProfile('${esc(r.team).replace(/'/g,"\\'")}')">
+    <td class="num muted">${i+1}</td><td><b>${esc(r.team)}</b> <span class="muted small">›</span></td>
     <td class="num">${r.p}</td><td class="num">${r.w}</td><td class="num">${r.d}</td><td class="num">${r.l}</td>
     <td class="num">${r.gf}</td><td class="num">${r.ga}</td><td class="num">${r.gf-r.ga>0?"+":""}${r.gf-r.ga}</td>
     <td class="num">${r.cs}</td><td class="num" style="font-weight:700;color:var(--accent)">${r.pts}</td>
     <td class="num small muted">${r.hw}-${r.hd}-${r.hl}</td><td class="num small muted">${r.aw}-${r.ad}-${r.al}</td>
     <td>${formBadges(r.form)}</td></tr>`).join("")}
-  </table></div>
-  <div class="panel"><p class="small muted">Computed live from synced results. Rotation flags for form-stripping (Hard Rule 4) stay manual — mark them on the prediction's audit when relevant. CS = clean sheets. Home/Away = W-D-L.</p></div>`;
+  </table>`:'<p class="muted" style="padding:10px">No results yet for this season.</p>'}
+  </div>
+  <div class="panel"><p class="small muted">Click any team for its profile: multi-season record, scoring patterns, goal timing, vulnerability windows, formations, and playing style.</p></div>`;
+}
+/* --- profile charts --- */
+function timingChart(t){
+  if(!t)return '<p class="muted small">No timing data for this season.</p>';
+  const bands=["1-15","16-30","31-45","46-60","61-75","76+"];
+  const vals=bands.map(b=>({b,f:t[b]?.goals||0,a:(t[b]?.against?.goals)||0}));
+  const max=Math.max(1,...vals.map(v=>Math.max(v.f,v.a)));
+  const W=620,Hh=160,bw=32,gap=(W-50)/6;
+  let out=`<svg viewBox="0 0 ${W} ${Hh+34}" style="max-width:660px;width:100%">`;
+  vals.forEach((v,i)=>{const x=35+i*gap;
+    const hf=Math.round(v.f/max*Hh*0.88), ha=Math.round(v.a/max*Hh*0.88);
+    out+=`<rect x="${x}" y="${Hh-hf}" width="${bw}" height="${Math.max(hf,1)}" fill="var(--green)" rx="3"><title>scored ${v.f} (${v.b}')</title></rect>`;
+    out+=`<rect x="${x+bw+5}" y="${Hh-ha}" width="${bw}" height="${Math.max(ha,1)}" fill="var(--red)" rx="3"><title>conceded ${v.a} (${v.b}')</title></rect>`;
+    out+=`<text x="${x+bw}" y="${Hh+18}" fill="var(--muted)" font-size="11" text-anchor="middle">${v.b}'</text>`;
+    out+=`<text x="${x+bw/2}" y="${Hh-hf-4}" fill="var(--green)" font-size="11" text-anchor="middle">${v.f||""}</text>`;
+    out+=`<text x="${x+bw+5+bw/2}" y="${Hh-ha-4}" fill="var(--red)" font-size="11" text-anchor="middle">${v.a||""}</text>`;});
+  out+=`</svg>`;
+  const tot=vals.reduce((s2,v)=>s2+v.f,0)||1, tota=vals.reduce((s2,v)=>s2+v.a,0)||1;
+  const best=vals.reduce((a,b)=>b.f>a.f?b:a), worst=vals.reduce((a,b)=>b.a>a.a?b:a);
+  const late=vals[5].f+vals[4].f, early=vals[0].f+vals[1].f;
+  return out+`<p class="small" style="margin-top:6px">Scores most in <b class="pos">${best.b}'</b> (${Math.round(best.f/tot*100)}% of goals) · most vulnerable <b class="neg">${worst.b}'</b> (${Math.round(worst.a/tota*100)}% conceded) · ${late>early?'<b>late-game team</b> ('+Math.round(late/tot*100)+'% of goals after 60 min)':early>late?'<b>fast starter</b> ('+Math.round(early/tot*100)+'% of goals before 30 min)':'evenly spread across the match'}</p>`;
+}
+function butterfly(matches){
+  if(!matches||!matches.length)return '<p class="muted small">No match data.</p>';
+  const W=640,mid=64,H=132,n=matches.length,step=(W-30)/n,bw=Math.max(3,Math.floor(step)-2);
+  let out=`<svg viewBox="0 0 ${W} ${H}" style="max-width:680px;width:100%">`;
+  out+=`<line x1="0" y1="${mid}" x2="${W}" y2="${mid}" stroke="var(--border)"/>`;
+  matches.forEach((m,i)=>{const x=15+i*step;
+    out+=`<rect x="${x}" y="${mid-m.gf*11}" width="${bw}" height="${Math.max(m.gf*11,1)}" fill="var(--green)" opacity=".9"><title>${m.date} ${m.side==="h"?"vs":"@"} ${m.opp}: ${m.gf}-${m.ga} (${(m.result||"").toUpperCase()})</title></rect>`;
+    out+=`<rect x="${x}" y="${mid+1}" width="${bw}" height="${Math.max(m.ga*11,1)}" fill="var(--red)" opacity=".9"><title>${m.date} ${m.side==="h"?"vs":"@"} ${m.opp}: ${m.gf}-${m.ga}</title></rect>`;});
+  out+=`</svg><p class="small muted">Each bar = one match in season order. Green up = scored, red down = conceded. Hover for details.</p>`;
+  return out;
+}
+function halfSplit(team,season){
+  const ms=(HIST||[]).filter(m=>m.season===season&&(m.home===team||m.away===team)&&m.hthg!=null);
+  let s1=0,s2=0,c1=0,c2=0;
+  for(const m of ms){const home=m.home===team;
+    const gf1=home?m.hthg:m.htag, ga1=home?m.htag:m.hthg;
+    const gf=home?m.fthg:m.ftag, ga=home?m.ftag:m.fthg;
+    s1+=gf1;s2+=gf-gf1;c1+=ga1;c2+=ga-ga1;}
+  return {s1,s2,c1,c2,n:ms.length};
+}
+function styleChips(st){
+  if(!st)return "";
+  const chips=[];
+  if(st._ppda!=null) chips.push([st._ppda<9.5?"HIGH PRESS":st._ppda<12.5?"MID BLOCK":"DEEP BLOCK", st._ppda<9.5?"hit":st._ppda<12.5?"pend":"watch", "PPDA "+st._ppda+" (passes allowed per defensive action — lower = more aggressive)"]);
+  if(st._deep_per_match!=null) chips.push([st._deep_per_match>=8?"TERRITORIAL":"COUNTER-PUNCHING", "pend", st._deep_per_match+" deep completions/match"]);
+  const sit=st.situation||{};
+  const tot=Object.values(sit).reduce((a,x)=>a+(x.goals||0),0)||1;
+  const sp=((sit["From corner"]?.goals||0)+(sit["Set piece"]?.goals||0)+(sit["Direct freekick"]?.goals||0));
+  if(sp/tot>0.3) chips.push(["SET-PIECE RELIANT ("+Math.round(sp/tot*100)+"%)","watch","goals from corners/set pieces/free kicks"]);
+  const spd=st.attackSpeed||{};
+  const stot=Object.values(spd).reduce((a,x)=>a+(x.goals||0),0)||1;
+  const fast=(spd["Fast"]?.goals||0);
+  if(fast/stot>0.25) chips.push(["TRANSITION THREAT ("+Math.round(fast/stot*100)+"%)","miss","goals from fast attacks — relevant for Script E PRESS TRAP"]);
+  return chips.map(([l,c,t2])=>`<span class="tag ${c}" title="${esc(t2)}" style="margin:2px">${l}</span>`).join(" ");
+}
+function formationRows(st){
+  const f=(st&&st.formation)||{}; const arr=Object.values(f);
+  if(!arr.length)return '<tr><td class="muted" colspan="4">No formation data.</td></tr>';
+  const tot=arr.reduce((s2,x)=>s2+(+x.time||0),0)||1;
+  return arr.sort((a,b)=>(+b.time||0)-(+a.time||0)).slice(0,5).map(x=>
+    `<tr><td class="num"><b>${esc(x.stat)}</b></td><td class="num">${Math.round((+x.time||0)/tot*100)}% of minutes</td><td class="num">${x.goals??"—"} scored / ${x.against?.goals??"—"} conceded</td><td class="num">${x.xG?(+x.xG).toFixed(1):"—"} xG</td></tr>`).join("");
+}
+function vProfile(){
+  const team=profileTeam;
+  const profs=PROFILES[team]||[];
+  const seasonsPlayed=seasonList().filter(s2=>matchesFor(s2).some(m=>m.home===team||m.away===team)).sort();
+  if(plSeason && !seasonsPlayed.includes(plSeason)) plSeason=seasonsPlayed[seasonsPlayed.length-1];
+  const prof=profs.find(p=>p.season===plSeason);
+  const st=prof?prof.stats:null;
+  const trend=seasonsPlayed.map(s2=>{const tb=tableFrom(matchesFor(s2));const i=tb.findIndex(r=>r.team===team);return i<0?null:{season:s2,pos:i+1,...tb[i]};}).filter(Boolean);
+  const cur=trend.find(r=>r.season===plSeason);
+  const hs=halfSplit(team,plSeason);
+  const xg=prof?prof.matches.reduce((a,m)=>a+m.xg,0):null, xga=prof?prof.matches.reduce((a,m)=>a+m.xga,0):null;
+  const coach=DB.coaches.find(c=>c.team===team);
+  const opts=seasonsPlayed.slice().reverse().map(s2=>`<option ${s2===plSeason?"selected":""}>${s2}</option>`).join("");
+  return plBanner()+`
+  <div class="flex" style="margin-bottom:4px">
+    <button class="btn ghost sm" onclick="closeProfile()">← Table</button>
+    <h2 style="color:var(--text);font-size:20px;font-weight:800">${esc(team)}</h2>
+    <select class="right" onchange="setPlSeason(this.value)">${opts}</select>
+  </div>
+  ${cur?`<div class="grid cards">
+    ${card("Position","#"+cur.pos,plSeason)}
+    ${card("Record",cur.w+"-"+cur.d+"-"+cur.l,cur.p+" played · "+cur.pts+" pts")}
+    ${card("Goals",cur.gf+" : "+cur.ga,"GD "+(cur.gf-cur.ga>0?"+":"")+(cur.gf-cur.ga)+" · "+cur.cs+" clean sheets")}
+    ${xg!=null?card("xG : xGA",xg.toFixed(0)+" : "+xga.toFixed(0),(cur.gf-xg>2?"overperforming":xg-cur.gf>2?"underperforming":"tracking")+" attack xG"):""}
+    ${card("Home / Away",cur.hw+"-"+cur.hd+"-"+cur.hl+" / "+cur.aw+"-"+cur.ad+"-"+cur.al,(cur.hw>=2*cur.aw&&cur.hw>3?"fortress-home lean":"balanced venue splits"))}
+  </div>`:""}
+  <div class="panel"><h2>Goal Timing — when they score (green) vs when they get scored on (red)</h2>${timingChart(st&&st.timing)}
+  ${hs.n?`<p class="small" style="margin-top:6px">Halves: scores ${hs.s1}/${hs.s1+hs.s2} in 1H vs ${hs.s2} in 2H · concedes ${hs.c1} in 1H vs ${hs.c2} in 2H ${hs.c2>hs.c1*1.4?'<span class="neg">— fades late</span>':hs.c1>hs.c2*1.4?'<span class="neg">— slow starter defensively</span>':""}</p>`:""}</div>
+  <div class="panel"><h2>Scoring pattern through the season</h2>${butterfly(prof?prof.matches:null)}</div>
+  <div class="panel"><h2>Style & Formations</h2>
+    <div style="margin-bottom:10px">${styleChips(st)||'<span class="muted small">No style data.</span>'}</div>
+    <table><tr><th>Formation</th><th>Usage</th><th>Goals</th><th>Attack xG</th></tr>${formationRows(st)}</table>
+    ${coach?`<p class="small" style="margin-top:10px"><b class="muted">COACH:</b> ${esc(coach.name)}${coach.formations?" · "+esc(coach.formations):""}${coach.press?` · TMS axes: PRESS ${coach.press} / POSS ${coach.poss} / RISK ${coach.risk} / ADAPT ${coach.adapt}`:""}</p>`:""}
+  </div>
+  <div class="panel"><h2>Season-by-season (last ${trend.length})</h2>
+    <table><tr><th>Season</th><th>Pos</th><th>W-D-L</th><th>GF:GA</th><th>Pts</th><th>Final form</th></tr>
+    ${trend.slice().reverse().map(r=>`<tr class="rowbtn" onclick="setPlSeason('${r.season}')"><td class="num">${r.season}</td><td class="num"><b>#${r.pos}</b></td><td class="num">${r.w}-${r.d}-${r.l}</td><td class="num">${r.gf}:${r.ga}</td><td class="num" style="color:var(--accent);font-weight:700">${r.pts}</td><td>${formBadges(r.form)}</td></tr>`).join("")}</table>
+  </div>`;
 }
 
 /* ---------- PLAYERS ---------- */
