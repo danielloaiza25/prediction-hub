@@ -438,7 +438,16 @@ async function delNews(id){try{await api("news_items?id=eq."+id,{method:"DELETE"
 let plSeason=null, profileTeam=null, HIST=null, PROFILES={};
 let h2hOpp=null, h2hVenue="home", CALCPRE=null;
 const SEASON_LIVE = () => { const st=DB.plstate; return (st && !st.season_over && st.current_gw!=null) ? st.season : null; };
-async function ensureHist(){ if(!HIST) HIST = await api("pl_history?select=season,match_date,home,away,fthg,ftag,hthg,htag,referee,hy,ay,hr,ar,b365h,b365d,b365a&order=match_date.asc&limit=4000"); }
+async function ensureHist(){
+  if(HIST) return;
+  const acc=[];
+  for(let off=0;;off+=1000){
+    const page=await api("pl_history?select=season,match_date,home,away,fthg,ftag,hthg,htag,referee,hy,ay,hr,ar,b365h,b365d,b365a&order=match_date.asc&limit=1000&offset="+off);
+    acc.push(...page);
+    if(page.length<1000)break;
+  }
+  HIST=acc;
+}
 async function ensureProfiles(team){ if(!PROFILES[team]) PROFILES[team] = await api("team_profiles?team=eq."+encodeURIComponent(team)+"&order=season.asc"); }
 function seasonList(){
   const set=new Set(HIST?HIST.map(m=>m.season):[]);
