@@ -21,6 +21,11 @@ nav{display:flex;gap:4px;flex-wrap:wrap}
 nav button{background:none;border:1px solid transparent;color:var(--muted);padding:7px 13px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
 nav button:hover{color:var(--text)}
 nav button.active{background:var(--panel2);color:var(--accent);border-color:var(--border)}
+#subnav{display:flex;gap:4px;padding:8px 22px;background:#0f1420;border-bottom:1px solid var(--border)}
+#subnav:empty{display:none}
+#subnav button{background:none;border:none;color:var(--muted);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600}
+#subnav button.active{background:var(--panel2);color:var(--text)}
+#subnav button:hover{color:var(--text)}
 main{padding:22px;max-width:1280px;margin:0 auto}
 .grid{display:grid;gap:14px}
 .cards{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
@@ -79,6 +84,7 @@ details.rule{border-bottom:1px solid #1c2434;padding:8px 4px}
   <nav id="nav"></nav>
   <div class="right small muted" id="syncstate">connecting…</div>
 </header>
+<div id="subnav"></div>
 <main id="main">Loading…</main>
 <div id="toast"></div>
 
@@ -129,11 +135,26 @@ const fmtadj = v => v==null||v===0?'<span class="muted">—</span>':`<span class
 const outcomeTag = o => !o?'<span class="tag pend">PENDING</span>':o==="HIT"?'<span class="tag hit">✅ HIT</span>':o==="MISS"?'<span class="tag miss">❌ MISS</span>':o==="UNRESOLVED"?'<span class="tag pend" style="opacity:.6">UNRESOLVED</span>':o.startsWith("AVOID")?`<span class="tag avoid">${o==="AVOID_CORRECT"?"✅":"❌"} ${o.replace("_"," ")}</span>`:esc(o);
 
 /* ---------- NAV ---------- */
-const TABS = [["dashboard","Dashboard"],["predictions","Prediction Log"],["fixtures","Fixtures / Lineup Watch"],["pltable","PL Table"],["autopsies","Autopsies"],["players","PRS Players"],["coaches","Coaches (TMS)"],["venues","Venues (AIS)"],["calculator","Calculator"],["data","Import / Export"]];
+const GROUPS = [
+  {id:"dashboard", label:"Dashboard", tabs:[["dashboard","Dashboard"]]},
+  {id:"fixtures",  label:"Fixtures",  tabs:[["fixtures","Fixtures / Lineup Watch"]]},
+  {id:"preds",     label:"Predictions", tabs:[["predictions","Log"],["autopsies","Autopsies"]]},
+  {id:"league",    label:"League",    tabs:[["pltable","Table & Team Profiles"],["venues","Venues (AIS)"]]},
+  {id:"squads",    label:"Squads",    tabs:[["players","Players (PRS)"],["coaches","Coaches (TMS)"]]},
+  {id:"tools",     label:"Tools",     tabs:[["calculator","Calculator"],["data","Import / Export"]]},
+];
+const LASTTAB={};
+const groupOf = t => GROUPS.find(g=>g.tabs.some(([k])=>k===t)) || GROUPS[0];
 function renderNav(){
-  document.getElementById("nav").innerHTML = TABS.map(([k,l])=>`<button class="${TAB===k?'active':''}" onclick="go('${k}')">${l}</button>`).join("");
+  const g=groupOf(TAB);
+  document.getElementById("nav").innerHTML = GROUPS.map(gr=>`<button class="${gr.id===g.id?'active':''}" onclick="goGroup('${gr.id}')">${gr.label}</button>`).join("");
+  document.getElementById("subnav").innerHTML = g.tabs.length>1 ? g.tabs.map(([k,l])=>`<button class="${TAB===k?'active':''}" onclick="go('${k}')">${l}</button>`).join("") : "";
 }
-function go(t){TAB=t;location.hash=t;render();}
+function goGroup(id){
+  const g=GROUPS.find(x=>x.id===id);
+  go(LASTTAB[id]||g.tabs[0][0]);
+}
+function go(t){TAB=t;LASTTAB[groupOf(t).id]=t;location.hash=t;render();}
 
 function render(){
   renderNav();
