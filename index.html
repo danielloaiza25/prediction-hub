@@ -98,7 +98,7 @@ let TAB = location.hash.replace("#","") || "dashboard";
 
 async function loadAll(){
   document.getElementById("syncstate").textContent="syncing…";
-  const [p,pl,co,te,ve,ne,se,plf,plt] = await Promise.all([
+  const [p,pl,co,te,ve,ne,se,plf,plt,au] = await Promise.all([
     api("predictions?select=*&order=match_date.desc.nullslast,entry_no.desc"),
     api("players?select=*&order=team.asc,prs.desc"),
     api("coaches?select=*&order=team.asc"),
@@ -107,9 +107,10 @@ async function loadAll(){
     api("news_items?select=*&order=item_date.desc,id.desc"),
     api("settings?select=*"),
     api("pl_fixtures?select=*&order=kickoff.asc.nullslast"),
-    api("pl_teams?select=*&order=name.asc")
+    api("pl_teams?select=*&order=name.asc"),
+    api("autopsies?select=*&order=id.asc")
   ]);
-  DB={predictions:p, players:pl, coaches:co, teams:te, venues:ve, news:ne, settings:Object.fromEntries(se.map(s=>[s.key,s.value])), plf:plf, plt:plt};
+  DB={predictions:p, players:pl, coaches:co, teams:te, venues:ve, news:ne, settings:Object.fromEntries(se.map(s=>[s.key,s.value])), plf:plf, plt:plt, autopsies:au};
   DB.plstate = DB.settings.pl_state || null;
   document.getElementById("syncstate").textContent="✓ synced "+new Date().toLocaleTimeString();
   render();
@@ -128,7 +129,7 @@ const fmtadj = v => v==null||v===0?'<span class="muted">—</span>':`<span class
 const outcomeTag = o => !o?'<span class="tag pend">PENDING</span>':o==="HIT"?'<span class="tag hit">✅ HIT</span>':o==="MISS"?'<span class="tag miss">❌ MISS</span>':o==="UNRESOLVED"?'<span class="tag pend" style="opacity:.6">UNRESOLVED</span>':o.startsWith("AVOID")?`<span class="tag avoid">${o==="AVOID_CORRECT"?"✅":"❌"} ${o.replace("_"," ")}</span>`:esc(o);
 
 /* ---------- NAV ---------- */
-const TABS = [["dashboard","Dashboard"],["predictions","Prediction Log"],["fixtures","Fixtures / Lineup Watch"],["pltable","PL Table"],["players","PRS Players"],["coaches","Coaches (TMS)"],["venues","Venues (AIS)"],["calculator","Calculator"],["data","Import / Export"]];
+const TABS = [["dashboard","Dashboard"],["predictions","Prediction Log"],["fixtures","Fixtures / Lineup Watch"],["pltable","PL Table"],["autopsies","Autopsies"],["players","PRS Players"],["coaches","Coaches (TMS)"],["venues","Venues (AIS)"],["calculator","Calculator"],["data","Import / Export"]];
 function renderNav(){
   document.getElementById("nav").innerHTML = TABS.map(([k,l])=>`<button class="${TAB===k?'active':''}" onclick="go('${k}')">${l}</button>`).join("");
 }
@@ -141,6 +142,7 @@ function render(){
   else if(TAB==="predictions") m.innerHTML=vPredictions();
   else if(TAB==="fixtures") m.innerHTML=vFixtures();
   else if(TAB==="pltable"){renderPLTable();return;}
+  else if(TAB==="autopsies"){renderAutopsies();return;}
   else if(TAB==="players") m.innerHTML=vPlayers();
   else if(TAB==="coaches") m.innerHTML=vCoaches();
   else if(TAB==="venues") m.innerHTML=vVenues();
@@ -276,7 +278,7 @@ function vPredictions(){
       <td class="stars">${starstr(p.stars)}</td>
       <td class="small muted">${esc(p.game_script||"—")}</td>
       <td class="num">${esc(p.result||"—")}</td>
-      <td>${outcomeTag(p.outcome)}</td>
+      <td>${outcomeTag(p.outcome)}${p.outcome==="MISS"?(autopsyFor(p.id)?` <span class="tag watch" style="cursor:pointer" onclick="event.stopPropagation();openOrCreateAutopsy(${p.id})">🔬 AUTOPSY</span>`:` <span class="tag pend" style="cursor:pointer;opacity:.7" onclick="event.stopPropagation();openOrCreateAutopsy(${p.id})">+ autopsy</span>`):""}</td>
     </tr>
     ${expandId===p.id?`<tr><td colspan="10">${predDetail(p)}</td></tr>`:""}
   `).join("")}
@@ -298,7 +300,7 @@ function predDetail(p){
   </div>`;
 }
 function settleBlock(p){
-  if(p.outcome) return `<div class="formrow" style="margin-top:10px"><button class="btn ghost sm" onclick="delPred(${p.id})">Delete entry</button></div>`;
+  if(p.outcome) return `<div class="formrow" style="margin-top:10px">${p.outcome==="MISS"?`<button class="btn sm" onclick="openOrCreateAutopsy(${p.id})">🔬 ${autopsyFor(p.id)?"Open autopsy":"Write autopsy"}</button>`:""}<button class="btn ghost sm" onclick="delPred(${p.id})">Delete entry</button></div>`;
   const f=p.fixture_id?getFx(p.fixture_id):null;
   const resIn = f && f.finished;
   let banner="", resVal="", sugg=null;
@@ -367,6 +369,122 @@ async function settle(id){
   try{await api("predictions?id=eq."+id,{method:"PATCH",body}); toast("Settled"); loadAll();}catch(e){toast(e.message,false)}
 }
 async function delPred(id){ if(!confirm("Delete this entry?"))return; try{await api("predictions?id=eq."+id,{method:"DELETE"}); expandId=null; toast("Deleted"); loadAll();}catch(e){toast(e.message,false)} }
+
+/* ---------- AUTOPSIES ---------- */
+let autopsyExpand=null, autopsyEditId=null;
+const autopsyFor = pid => (DB.autopsies||[]).find(a=>a.prediction_id===pid);
+function openOrCreateAutopsy(pid){
+  if(autopsyFor(pid)){ autopsyExpand=pid; autopsyEditId=null; } else { autopsyEditId=pid; autopsyExpand=null; }
+  go("autopsies");
+}
+function matchStatsFor(p){
+  const f=p.fixture_id?getFx(p.fixture_id):null;
+  if(!f||!HIST)return null;
+  const m=HIST.find(m2=>m2.season===f.season&&m2.home===f.team_h_name&&m2.away===f.team_a_name);
+  if(!m||m.fthg==null)return null;
+  return {halftime:`${m.hthg}-${m.htag}`, fulltime:`${m.fthg}-${m.ftag}`, shots:`${m.hs??"?"} - ${m.aws??"?"}`, on_target:`${m.hst??"?"} - ${m.ast??"?"}`, cards:`${(m.hy||0)}y${(m.hr||0)?"+"+m.hr+"r":""} - ${(m.ay||0)}y${(m.ar||0)?"+"+m.ar+"r":""}`, referee:m.referee||""};
+}
+async function renderAutopsies(){
+  const m=document.getElementById("main");
+  m.innerHTML='<div class="panel"><p class="muted">Loading autopsies…</p></div>';
+  try{ await ensureHist(); }catch(e){}
+  m.innerHTML=vAutopsies();
+  window.scrollTo(0,0);
+}
+function autopsyPatterns(){
+  const A=DB.autopsies||[];
+  if(!A.length)return "";
+  const tagc={}, layerc={};
+  let lessons=0, rules=0;
+  for(const a of A){
+    for(const t of (a.tags||[])) tagc[t]=(tagc[t]||0)+1;
+    for(const [k,v] of Object.entries(a.divergence||{})) if(v) layerc[k]=(layerc[k]||0)+1;
+    lessons+=(a.lessons||[]).length; rules+=(a.rules_created||[]).length;
+  }
+  const misses=DB.predictions.filter(p=>p.outcome==="MISS").length;
+  const maxl=Math.max(1,...Object.values(layerc));
+  return `<div class="panel"><h2>Pattern Analysis — across ${A.length} autopsies</h2>
+  <div class="grid cards" style="margin-bottom:12px">
+    ${card("Misses autopsied",A.length+"/"+misses, misses>A.length?"⚠ "+(misses-A.length)+" miss(es) without autopsy":"every miss examined")}
+    ${card("Lessons banked",lessons,"distilled from failures")}
+    ${card("Rules created",rules,"permanent system upgrades")}
+  </div>
+  <p class="small muted" style="margin-bottom:6px">WHICH LAYER GETS BLAMED (from divergence entries):</p>
+  ${Object.entries(layerc).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="flex" style="margin:3px 0"><span class="num" style="width:70px;text-transform:uppercase">${esc(k)}</span><div class="bar" style="flex:1;max-width:300px"><i style="width:${v/maxl*100}%;background:var(--red)"></i></div><span class="num muted small">${v}×</span></div>`).join("")}
+  <p class="small muted" style="margin:10px 0 4px">RECURRING TAGS:</p>
+  ${Object.entries(tagc).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`<span class="tag ${n>1?"miss":"pend"}" style="margin:2px">${esc(t)}${n>1?" ×"+n:""}</span>`).join(" ")}
+  ${Object.values(tagc).some(n=>n>1)?'<p class="small" style="margin-top:8px"><b class="neg">Repeated tags = repeated failure modes.</b> Anything at ×2+ deserves a hard rule if one does not exist yet.</p>':""}
+  </div>`;
+}
+function vAutopsies(){
+  const A=[...(DB.autopsies||[])].sort((a,b)=>b.id-a.id);
+  const editP = autopsyEditId ? DB.predictions.find(p=>p.id===autopsyEditId) : null;
+  return `
+  <div class="flex"><h2 style="color:var(--accent);text-transform:uppercase;font-size:14px;letter-spacing:1px">Autopsy Log — every miss examined</h2></div>
+  ${editP?autopsyForm(editP):""}
+  ${autopsyPatterns()}
+  ${A.length?A.map(a=>{
+    const p=DB.predictions.find(x=>x.id===a.prediction_id);
+    const open=autopsyExpand===a.prediction_id;
+    return `<div class="panel">
+    <div class="flex rowbtn" onclick="autopsyExpand=${open?"null":a.prediction_id};render()">
+      <div><b>🔬 ${esc(a.headline||"Autopsy")}</b><br>
+      <span class="muted small">${p?esc(p.match)+" · "+(p.match_date||"")+" · picked "+esc(p.pick||"")+" "+(p.final_prob!=null?p.final_prob+"%":"")+" "+starstr(p.stars)+" · "+esc(p.result||""):""}</span></div>
+      <span class="right muted">${open?"▲":"▼"}</span>
+    </div>
+    ${open?`
+      <div class="detail" style="margin-top:10px"><b class="muted small">THE CALL & WHY</b><p class="small" style="margin-top:4px">${esc(a.predicted||"—")}</p></div>
+      <div class="detail"><b class="muted small">WHAT ACTUALLY HAPPENED</b><p class="small" style="margin-top:4px">${esc(a.happened||"—")}</p>
+      ${a.match_stats&&Object.keys(a.match_stats).length?`<table style="margin-top:8px">${Object.entries(a.match_stats).map(([k,v])=>`<tr><td class="muted small" style="text-transform:uppercase">${esc(k.replace(/_/g," "))}</td><td class="num">${esc(String(v))}</td></tr>`).join("")}</table>`:""}</div>
+      <div class="detail"><b class="muted small">WHERE THE MODEL DIVERGED</b>
+      ${Object.entries(a.divergence||{}).filter(([k,v])=>v).map(([k,v])=>`<p class="small" style="margin-top:6px"><span class="tag miss">${esc(k.toUpperCase())}</span> ${esc(v)}</p>`).join("")||'<p class="muted small">—</p>'}</div>
+      <div class="detail"><b class="muted small">LESSONS</b><ul style="margin:6px 0 0 18px">${(a.lessons||[]).map(l=>`<li class="small" style="margin:3px 0">${esc(l)}</li>`).join("")}</ul></div>
+      ${(a.rules_created||[]).length?`<div class="detail"><b class="muted small">PERMANENT RULES CREATED</b><ul style="margin:6px 0 0 18px">${a.rules_created.map(r=>`<li class="small" style="margin:3px 0"><b style="color:var(--accent)">${esc(r)}</b></li>`).join("")}</ul></div>`:""}
+      <div style="margin-top:8px">${(a.tags||[]).map(t=>`<span class="tag pend" style="margin:2px">${esc(t)}</span>`).join(" ")}
+      <button class="btn ghost sm" style="float:right" onclick="autopsyEditId=${a.prediction_id};autopsyExpand=null;render()">Edit</button></div>
+    `:""}</div>`}).join(""):'<div class="panel"><p class="muted">No autopsies yet. Create them from MISS entries in the Prediction Log.</p></div>'}
+  ${(()=>{const un=DB.predictions.filter(p=>p.outcome==="MISS"&&!autopsyFor(p.id));return un.length?`<div class="panel"><h2>⚠ Unexamined misses</h2>${un.map(p=>`<div class="flex" style="margin:6px 0"><span>${esc(p.match)} — ${esc(p.result||"")}</span><button class="btn sm right" onclick="openOrCreateAutopsy(${p.id})">Write autopsy</button></div>`).join("")}</div>`:""})()}`;
+}
+function autopsyForm(p){
+  const ex=autopsyFor(p.id);
+  const ms=ex&&ex.match_stats&&Object.keys(ex.match_stats).length?ex.match_stats:(matchStatsFor(p)||{});
+  const ln=p.layer_notes||{};
+  const predDefault=ex?ex.predicted:`${esc(p.pick||"")} ${p.final_prob!=null?p.final_prob+"%":""}, ${p.stars||"?"}★.${p.base_prob!=null?` Pipeline: base ${p.base_prob} → PRS ${p.prs_adj>0?"+":""}${p.prs_adj} → AIS ${p.ais_adj>0?"+":""}${p.ais_adj} → TMS ${p.tms_adj>0?"+":""}${p.tms_adj} → ctx ${p.context_adj>0?"+":""}${p.context_adj}.`:""} ${Object.entries(ln).filter(([k,v])=>v).map(([k,v])=>k.toUpperCase()+": "+v).join(" · ")}`;
+  const dv=ex?(ex.divergence||{}):{};
+  return `<div class="panel" style="border-color:var(--accent)"><h2>${ex?"Edit":"New"} Autopsy — ${esc(p.match)} (${esc(p.result||"result?")})</h2>
+  <div class="formrow"><label style="flex:1">Headline (the one-line verdict)<input id="au_head" style="width:100%" value="${esc(ex?ex.headline:"")}" placeholder="e.g. PRS Origin: absence noted, never priced"></label></div>
+  <div class="formrow"><label style="flex:1">The call & why (auto-filled from the entry — edit freely)<textarea id="au_pred" rows="3">${esc(predDefault)}</textarea></label></div>
+  <div class="formrow"><label style="flex:1">What actually happened (story, timeline, key moments)<textarea id="au_happ" rows="4">${esc(ex?ex.happened||"":"")}</textarea></label></div>
+  <p class="small muted" style="margin:4px 0">Where did each layer diverge from reality? (leave blank if the layer was fine)</p>
+  <div class="formrow">
+    ${["base","prs","ais","tms","context"].map(k=>`<label style="flex:1;min-width:180px">${k.toUpperCase()}<input id="au_dv_${k}" value="${esc(dv[k]||"")}"></label>`).join("")}
+  </div>
+  <div class="formrow">
+    <label style="flex:1">Lessons (one per line)<textarea id="au_less" rows="3">${esc((ex?ex.lessons||[]:[]).join("\\n"))}</textarea></label>
+    <label style="flex:1">Rules created (one per line)<textarea id="au_rules" rows="3">${esc((ex?ex.rules_created||[]:[]).join("\\n"))}</textarea></label>
+  </div>
+  <div class="formrow"><label style="flex:1">Tags (comma-separated — reuse existing tags to surface patterns)<input id="au_tags" style="width:100%" value="${esc((ex?ex.tags||[]:[]).join(", "))}"></label></div>
+  ${Object.keys(ms).length?`<p class="small muted">Auto-captured stats: ${Object.entries(ms).map(([k,v])=>k+" "+v).join(" · ")}</p>`:""}
+  <div class="formrow"><button class="btn" onclick="saveAutopsy(${p.id})">Save autopsy</button>
+  <button class="btn ghost" onclick="autopsyEditId=null;render()">Cancel</button>
+  ${ex?`<button class="btn ghost sm right" onclick="delAutopsy(${ex.id})">Delete</button>`:""}</div></div>`;
+}
+async function saveAutopsy(pid){
+  const g=id=>document.getElementById(id);
+  const p=DB.predictions.find(x=>x.id===pid);
+  const divergence={}; for(const k of ["base","prs","ais","tms","context"]){const v=g("au_dv_"+k).value.trim(); if(v)divergence[k]=v;}
+  const body={prediction_id:pid, headline:g("au_head").value||null, predicted:g("au_pred").value||null, happened:g("au_happ").value||null,
+    divergence, match_stats:matchStatsFor(p)||{}, lessons:g("au_less").value.split("\\n").map(x=>x.trim()).filter(Boolean),
+    rules_created:g("au_rules").value.split("\\n").map(x=>x.trim()).filter(Boolean),
+    tags:g("au_tags").value.split(",").map(x=>x.trim()).filter(Boolean)};
+  const ex=autopsyFor(pid);
+  try{
+    if(ex) await api("autopsies?id=eq."+ex.id,{method:"PATCH",body});
+    else await api("autopsies",{method:"POST",body});
+    autopsyEditId=null; autopsyExpand=pid; toast("Autopsy saved"); await loadAll();
+  }catch(e){toast(e.message,false)}
+}
+async function delAutopsy(id){ if(!confirm("Delete this autopsy?"))return; try{await api("autopsies?id=eq."+id,{method:"DELETE"}); autopsyEditId=null; toast("Deleted"); await loadAll();}catch(e){toast(e.message,false)} }
 
 /* ---------- FIXTURES ---------- */
 let showAddNews=false, mwSel=null;
