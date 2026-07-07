@@ -140,7 +140,7 @@ const GROUPS = [
   {id:"fixtures",  label:"Fixtures",  tabs:[["fixtures","Fixtures / Lineup Watch"]]},
   {id:"preds",     label:"Predictions", tabs:[["predictions","Log"],["autopsies","Autopsies"]]},
   {id:"league",    label:"League",    tabs:[["pltable","Table & Team Profiles"],["venues","Venues (AIS)"]]},
-  {id:"squads",    label:"Squads",    tabs:[["players","Players (PRS)"],["coaches","Coaches (TMS)"]]},
+  {id:"squads",    label:"Scouting Report", tabs:[["scout","Clubs"],["players","Players (PRS)"],["coaches","Coaches (TMS)"]]},
   {id:"tools",     label:"Tools",     tabs:[["calculator","Calculator"],["data","Import / Export"]]},
 ];
 const LASTTAB={};
@@ -164,6 +164,7 @@ function render(){
   else if(TAB==="fixtures") m.innerHTML=vFixtures();
   else if(TAB==="pltable"){renderPLTable();return;}
   else if(TAB==="autopsies"){renderAutopsies();return;}
+  else if(TAB==="scout") m.innerHTML=vScout();
   else if(TAB==="players") m.innerHTML=vPlayers();
   else if(TAB==="coaches") m.innerHTML=vCoaches();
   else if(TAB==="venues") m.innerHTML=vVenues();
@@ -249,6 +250,33 @@ function edgeStats(){
   for(const r of rows){const mkt = r.market_prob ?? (100/r.closing_odds); sum += (r.final_prob-mkt);}
   return {n:rows.length, avg:rows.length?(sum/rows.length):null};
 }
+let SCAN=null;
+async function scanWeek(){
+  const out=document.getElementById("scanout");
+  if(out)out.innerHTML='<p class="muted small">Scanning — loading five seasons of data…</p>';
+  try{
+    await Promise.all([ensureHist(),ensureAllProfiles(),ensureRotation(),ensureCalendar()]);
+    if(!plSeason) plSeason=SEASON_LIVE()||seasonList()[0];
+    const ups=DB.plf.filter(f=>!f.started&&f.kickoff&&new Date(f.kickoff)>Date.now()).sort((a,b)=>new Date(a.kickoff)-new Date(b.kickoff)).slice(0,12);
+    if(!ups.length){SCAN=[];if(out)out.innerHTML='<p class="muted small">No upcoming fixtures scheduled yet — the scan lights up once the season fixtures load.</p>';return;}
+    SCAN=ups.map(f=>{const E=matchupEngine(f.team_h_name,f.team_a_name,true);return E?{f,E,edge:Math.abs(E.base-50)+(E.lowSample?-8:0)}:null;}).filter(Boolean).sort((a,b)=>b.edge-a.edge);
+    if(out)out.innerHTML=renderScan();
+  }catch(e){ if(out)out.innerHTML='<p class="neg small">Scan failed: '+esc(e.message)+'</p>'; }
+}
+function renderScan(){
+  if(!SCAN||!SCAN.length)return '<p class="muted small">Nothing to scan yet.</p>';
+  return `<table><tr><th>#</th><th>Match</th><th>Lean</th><th>Base</th><th>Script</th><th></th></tr>`+SCAN.map((r,i)=>{
+    const homeLean=r.E.base>=50;
+    return `<tr class="rowbtn" onclick="openScanReport(${r.f.id})"><td class="num muted">${i+1}</td><td><b>${esc(fxLabel(r.f))}</b> <span class="muted small">${r.f.kickoff?new Date(r.f.kickoff).toLocaleDateString([],{weekday:"short"}):""}</span></td>
+    <td><b>${esc(homeLean?r.f.team_h_name:r.f.team_a_name)}</b></td><td class="num" style="color:var(--accent);font-weight:700">${homeLean?r.E.base:100-r.E.base-Math.round(r.E.poisson.d)}%</td>
+    <td class="small muted">${esc(r.E.script.code)}</td><td>${r.E.lowSample?'<span class="tag miss">LOW SAMPLE</span>':""}${r.E.alerts.length?' <span class="tag watch">👁</span>':""} <span class="tag pend">report →</span></td></tr>`}).join("")+`</table>
+    <p class="small muted" style="margin-top:6px">Edge-ranked. This is the BASE layer talking — your PRS/TMS/context reads decide whether any of these become bets.</p>`;
+}
+function openScanReport(fid){
+  const f=getFx(fid); if(!f)return;
+  profileTeam=f.team_h_name; h2hOpp=f.team_a_name; h2hVenue="home";
+  go("pltable");
+}
 function vDashboard(){
   const t=tierStats(), bs=betStats(), es=edgeStats();
   const pct=(h,tt)=>tt?Math.round(h/tt*100)+"%":"—";
@@ -271,8 +299,10 @@ function vDashboard(){
     <p class="muted small">${esc(legacy.note||"")}</p>
     <p style="margin-top:8px" class="num">4★+ combined: <b>${legacy.four_plus?.hits||0}/${legacy.four_plus?.total||0}</b> (${pct(legacy.four_plus?.hits||0,legacy.four_plus?.total||0)})</p>
   </div>`:""}
-  <div class="panel"><h2>Hard Rules — each one paid for with a loss</h2>
-    ${rules.map(r=>`<details class="rule"><summary>${esc(r.split("(")[0])}</summary><p class="muted small" style="padding:6px 0 2px">${esc(r)}</p></details>`).join("")}
+  ${(()=>{const up=DB.plf.filter(f=>!f.started&&f.kickoff&&(new Date(f.kickoff)-Date.now())<7*864e5&&(new Date(f.kickoff)>Date.now())).slice(0,6);
+    return up.length?`<div class="panel"><h2>Upcoming — next 7 days</h2><table>${up.map(f=>`<tr><td class="num small">${new Date(f.kickoff).toLocaleString([],{weekday:"short",hour:"2-digit",minute:"2-digit"})}</td><td><b>${esc(fxLabel(f))}</b></td><td class="small muted">MW${f.event}</td><td>${DB.predictions.some(p=>p.fixture_id===f.id)?'<span class="tag pend">CALLED</span>':`<button class="btn ghost sm" onclick="predictFixture(${f.id})">Predict</button>`}</td></tr>`).join("")}</table></div>`:"";})()}
+  <div class="panel"><div class="flex"><h2>Top Picks of the Week</h2><button class="btn sm right" onclick="scanWeek()">⚡ Scan matchweek</button></div>
+    <div id="scanout">${SCAN?renderScan():'<p class="muted small">Runs the Matchup Engine over every upcoming fixture and ranks the edges. Click any pick for the full report.</p>'}</div>
   </div>`;
 }
 function card(k,v,s,h,t){
@@ -304,7 +334,10 @@ function vPredictions(){
     </tr>
     ${expandId===p.id?`<tr><td colspan="10">${predDetail(p)}</td></tr>`:""}
   `).join("")}
-  </table></div>`;
+  </table></div>
+  <div class="panel"><h2>Hard Rules — each one paid for with a loss</h2>
+    ${(DB.settings.hard_rules||[]).map(r=>`<details class="rule"><summary>${esc(r.split("(")[0])}</summary><p class="muted small" style="padding:6px 0 2px">${esc(r)}</p></details>`).join("")}
+  </div>`;
 }
 function predDetail(p){
   const ln = p.layer_notes||{};
@@ -509,7 +542,28 @@ async function saveAutopsy(pid){
 async function delAutopsy(id){ if(!confirm("Delete this autopsy?"))return; try{await api("autopsies?id=eq."+id,{method:"DELETE"}); autopsyEditId=null; toast("Deleted"); await loadAll();}catch(e){toast(e.message,false)} }
 
 /* ---------- FIXTURES ---------- */
-let showAddNews=false, mwSel=null;
+let showAddNews=false, mwSel=null, WX={}, WXREQ={};
+const CITY={"Arsenal":[51.55,-0.11],"Chelsea":[51.48,-0.19],"Spurs":[51.60,-0.07],"West Ham":[51.54,0.02],"Fulham":[51.47,-0.22],"Crystal Palace":[51.40,-0.09],"Brentford":[51.49,-0.29],"Man City":[53.48,-2.20],"Man Utd":[53.46,-2.29],"Liverpool":[53.43,-2.96],"Everton":[53.44,-2.99],"Newcastle":[54.98,-1.62],"Sunderland":[54.91,-1.38],"Leeds":[53.78,-1.57],"Burnley":[53.79,-2.23],"Wolves":[52.59,-2.13],"Aston Villa":[52.51,-1.88],"Nott'm Forest":[52.94,-1.13],"Brighton":[50.86,-0.08],"Bournemouth":[50.74,-1.84]};
+function wxFor(f){
+  if(!f.kickoff||f.started)return null;
+  const days=(new Date(f.kickoff)-Date.now())/864e5;
+  if(days<0||days>6.5)return null;
+  const co=CITY[f.team_h_name]; if(!co)return null;
+  const key=f.team_h_name+"|"+f.kickoff.slice(0,13);
+  if(WX[key])return WX[key];
+  if(!WXREQ[key]){
+    WXREQ[key]=true;
+    const d=f.kickoff.slice(0,10);
+    fetch(`https://api.open-meteo.com/v1/forecast?latitude=${co[0]}&longitude=${co[1]}&hourly=temperature_2m,precipitation,wind_speed_10m&start_date=${d}&end_date=${d}`)
+      .then(r=>r.json()).then(j=>{
+        const hr=+f.kickoff.slice(11,13);
+        const i=(j.hourly&&j.hourly.time||[]).findIndex(t=>+t.slice(11,13)===hr);
+        if(i>=0){WX[key]={t:Math.round(j.hourly.temperature_2m[i]),p:+j.hourly.precipitation[i].toFixed(1),w:Math.round(j.hourly.wind_speed_10m[i])};if(TAB==="fixtures")render();}
+      }).catch(()=>{});
+  }
+  return null;
+}
+const wxChip=x=>!x?"":` <span class="small ${x.w>=25?"neg":"muted"}" title="kickoff forecast: wind ${x.w}km/h, rain ${x.p}mm, ${x.t}°C">${x.w>=25?"💨"+x.w:""}${x.p>=0.5?" 🌧":""}${x.t>=28?" 🔥":""}${x.w<25&&x.p<0.5&&x.t<28?"☀":""}</span>`;
 function restDays(team,kick){
   if(!kick)return null;
   const k=new Date(kick);
@@ -537,7 +591,7 @@ function vMatchweek(){
       ? `<span class="rowbtn" style="cursor:pointer" onclick="expandId=${p.id};go('predictions')">${p.is_avoid?'<span class="tag avoid">AVOID</span>':`<b>${esc(p.pick||"—")}</b> ${p.final_prob!=null?p.final_prob+"%":""} <span class="stars">${starstr(p.stars)}</span>`} ${p.outcome?outcomeTag(p.outcome):(f.finished?'<span class="tag hit">settle →</span>':'')}</span>`
       : (f.finished?'<span class="muted small">—</span>':`<button class="btn ghost sm" onclick="predictFixture(${f.id})">+ Predict</button>`);
     return `<tr><td class="num small">${f.kickoff?new Date(f.kickoff).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}):"TBD"}</td>
-    <td><b>${esc(fxLabel(f))}</b></td><td class="num">${fxScore(f)||"—"}</td><td>${status}</td><td>${restCell}</td><td>${predCell}</td></tr>`}).join("")}
+    <td><b>${esc(fxLabel(f))}</b>${wxChip(wxFor(f))}</td><td class="num">${fxScore(f)||"—"}</td><td>${status}</td><td>${restCell}</td><td>${predCell}</td></tr>`}).join("")}
   </table>${fs.length?"":'<p class="muted" style="padding:10px">No fixtures scheduled for this matchweek yet.</p>'}</div>`;
 }
 let PREFILL=null;
@@ -560,7 +614,18 @@ function vFixtures(){
   ${up.map(p=>`<tr><td class="num">${p.match_date||"—"}</td><td><b>${esc(p.match)}</b></td><td class="muted">${esc(p.venue||"—")}</td><td>${p.is_avoid?'<span class="tag avoid">AVOID</span>':esc(p.pick||"not called yet")}</td><td class="stars">${starstr(p.stars)}</td>
   <td>${p.lineup_watch?`<span class="tag watch">👁 LINEUP WATCH</span> <span class="small muted">${esc(p.lineup_watch_note||"")}</span>`:'<span class="tag pend">OPEN</span>'}</td></tr>`).join("")}</table>`:'<p class="muted">No open fixtures. Add one from the Prediction Log tab (it can start with no pick).</p>'}
   </div>
-  <div class="panel"><div class="flex"><h2>News Feed</h2><button class="btn sm right" onclick="showAddNews=!showAddNews;render()">${showAddNews?"Cancel":"+ Add item"}</button></div>
+  ${(()=>{
+    if(NEWS===null&&!NEWSREQ){NEWSREQ=true;fetch(SB_URL+"/functions/v1/sync-news").then(r=>r.json()).then(d=>{NEWS=d.items||[];if(TAB==="fixtures")render();}).catch(()=>{NEWS=[];});}
+    const items=(NEWS||[]).filter(n=>!NEWSINJ||n.injury).slice(0,15);
+    return `<div class="panel"><div class="flex"><h2>Live Feeds — BBC & Sky</h2>
+    <label class="small muted right" style="display:flex;align-items:center;gap:6px"><input type="checkbox" ${NEWSINJ?"checked":""} onchange="NEWSINJ=this.checked;render()" style="width:16px;height:16px"> injuries/availability only</label></div>
+    ${NEWS===null?'<p class="muted small">Loading feeds…</p>':items.length?items.map((n,i)=>`<div class="detail" style="padding:8px 12px"><div class="flex">
+      ${n.injury?'<span class="tag miss">INJ</span>':""}<span class="tag pend">${esc(n.src)}</span>
+      <a href="${esc(n.link)}" target="_blank" style="color:var(--text);text-decoration:none"><b class="small">${esc(n.title)}</b></a>
+      <button class="btn ghost sm right" onclick="saveFeedItem(${(NEWS||[]).indexOf(n)})">💾 Save</button></div>
+      ${n.desc?`<p class="small muted" style="margin-top:4px">${esc(n.desc)}</p>`:""}</div>`).join(""):'<p class="muted small">No items match.</p>'}
+    </div>`;})()}
+  <div class="panel"><div class="flex"><h2>Saved News & Notes</h2><button class="btn sm right" onclick="showAddNews=!showAddNews;render()">${showAddNews?"Cancel":"+ Add item"}</button></div>
   ${showAddNews?`<div class="formrow">
     <label>Date<input id="nw_date" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
     <label>Tag<select id="nw_tag"><option>injury</option><option>lineup</option><option>presser</option><option>other</option></select></label>
@@ -570,6 +635,13 @@ function vFixtures(){
     <button class="btn sm" onclick="addNews()">Save</button></div>`:""}
   ${DB.news.length?DB.news.map(n=>{const p=DB.predictions.find(x=>x.id===n.prediction_id);return `<div class="detail"><span class="tag ${n.tag==='injury'?'miss':n.tag==='lineup'?'watch':'pend'}">${esc(n.tag||"note")}</span> <b>${esc(n.headline)}</b> <span class="muted small">${n.item_date||""}${p?" · "+esc(p.match):""}</span>${n.body?`<p class="small muted" style="margin-top:4px">${esc(n.body)}</p>`:""} <button class="btn ghost sm" style="float:right" onclick="delNews(${n.id})">✕</button></div>`}).join(""):'<p class="muted">No news items yet. Injury news, lineup confirmations, presser notes — tagged to matches.</p>'}
   </div>`;
+}
+let NEWS=null, NEWSREQ=false, NEWSINJ=false;
+async function saveFeedItem(i){
+  const n=(NEWS||[])[i]; if(!n)return;
+  try{ await api("news_items",{method:"POST",body:{headline:n.title, body:(n.desc||"")+"\n"+n.link, tag:n.injury?"injury":"other", item_date:new Date().toISOString().slice(0,10)}});
+    toast("Saved to your news log"); loadAll();
+  }catch(e){toast(e.message,false)}
 }
 async function addNews(){
   const g=id=>document.getElementById(id);
@@ -581,7 +653,8 @@ async function delNews(id){try{await api("news_items?id=eq."+id,{method:"DELETE"
 
 /* ---------- PL TABLE + TEAM PROFILES ---------- */
 let plSeason=null, profileTeam=null, HIST=null, PROFILES={};
-let h2hOpp=null, h2hVenue="home", CALCPRE=null;
+let h2hOpp=null, h2hVenue="home", CALCPRE=null, koMode="league";
+function setKoMode(v){koMode=v;renderPLTable();}
 const SEASON_LIVE = () => { const st=DB.plstate; return (st && !st.season_over && st.current_gw!=null) ? st.season : null; };
 async function ensureHist(){
   if(HIST) return;
@@ -624,7 +697,7 @@ async function renderPLTable(){
   try{
     await ensureHist();
     if(!plSeason) plSeason = SEASON_LIVE() || seasonList()[0];
-    if(profileTeam){ await Promise.all([ensureAllProfiles(), ensureRotation(), ensureCalendar()]); }
+    if(profileTeam){ await Promise.all([ensureAllProfiles(), ensureRotation(), ensureCalendar()]); } else { await ensureCalendar(); }
     m.innerHTML = profileTeam ? vProfile() : vTable();
   }catch(e){ m.innerHTML = plBanner()+'<div class="panel"><p class="neg">Failed to load: '+esc(e.message)+'</p></div>'; }
   window.scrollTo(0,0);
@@ -632,12 +705,28 @@ async function renderPLTable(){
 function openProfile(t){ profileTeam=t; renderPLTable(); }
 function closeProfile(){ profileTeam=null; renderPLTable(); }
 function setPlSeason(v){ plSeason=v; renderPLTable(); }
+let COMPSEL="Premier League";
+function setComp(v){COMPSEL=v;renderPLTable();}
+const ROUNDNAME={"16":"Round of 16","125":"Quarter-finals","150":"Semi-finals","160":"Final"};
+function vCupComp(comp){
+  const key=comp==="Champions League"?"UCL":comp==="Europa League"?"UEL":comp==="Conference League"?"UECL":comp;
+  const rows=(CAL||[]).filter(c=>c.comp===key);
+  const byRound={};
+  for(const r of rows)(byRound[r.round]||(byRound[r.round]=[])).push(r);
+  const order=Object.keys(byRound).sort((a,b)=>(+a||+a===0?+a:99)+(ROUNDNAME[a]?90+ +a/10:0)-((+b||0)+(ROUNDNAME[b]?90+ +b/10:0)));
+  return `<div class="panel"><h2>${esc(comp)} — PL clubs' ties</h2>
+  ${rows.length?order.map(rd=>`<p class="small" style="margin:10px 0 4px"><b style="color:var(--accent)">${esc(ROUNDNAME[rd]||"Round "+rd)}</b></p>
+    <table>${byRound[rd].sort((a,b)=>String(a.event_date).localeCompare(String(b.event_date))).map(m=>`<tr><td class="num small">${m.event_date||""}</td><td>${esc(m.home)} <b class="num">${m.home_score??""}${m.home_score!=null?"-":""}${m.away_score??""}</b> ${esc(m.away)}</td><td class="small muted">${esc(m.status||"")}</td></tr>`).join("")}</table>`).join("")
+  :'<p class="muted small">No matches synced for this competition yet — cup draws load automatically as rounds are scheduled.</p>'}</div>`;
+}
 function vTable(){
+  const compSel=`<select onchange="setComp(this.value)" style="font-weight:700">${["Premier League","FA Cup","EFL Cup","Champions League","Europa League","Conference League"].map(c=>`<option ${c===COMPSEL?"selected":""}>${c}</option>`).join("")}</select>`;
+  if(COMPSEL!=="Premier League") return plBanner()+`<div class="panel" style="padding:10px"><div class="flex">${compSel}</div></div>`+vCupComp(COMPSEL);
   const rows=tableFrom(matchesFor(plSeason));
   const opts=seasonList().map(s2=>`<option ${s2===plSeason?"selected":""}>${s2}${s2===SEASON_LIVE()?" · live":""}</option>`).join("");
   return plBanner()+`
   <div class="panel" style="padding:6px 10px">
-  <div class="flex" style="padding:10px 6px"><h2 style="margin:0">League Table — ${esc(plSeason||"")}</h2>
+  <div class="flex" style="padding:10px 6px">${compSel}
   <select class="right" onchange="setPlSeason(this.value)">${opts}</select></div>
   ${rows.length?`<table>
   <tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>CS</th><th>Pts</th><th>Home</th><th>Away</th><th>Form (last 5)</th></tr>
@@ -791,13 +880,16 @@ function leagueAvg(season){
 }
 function pois(l,k){let p=Math.exp(-l);for(let i=1;i<=k;i++)p*=l/i;return p;}
 function poissonWDL(gA,gB){
-  let w=0,d=0,l=0,best={p:0,s:"1-1"};
+  // Dixon-Coles low-score correction (rho<0 boosts 0-0/1-1, trims 1-0/0-1)
+  const RHO=-0.11;
+  const tau=(x,y)=>x===0&&y===0?1-gA*gB*RHO:x===0&&y===1?1+gA*RHO:x===1&&y===0?1+gB*RHO:x===1&&y===1?1-RHO:1;
+  let w=0,d=0,l=0,tot=0,best={p:0,s:"1-1"};
   for(let a=0;a<=7;a++)for(let b=0;b<=7;b++){
-    const p=pois(gA,a)*pois(gB,b);
+    let p=pois(gA,a)*pois(gB,b)*tau(a,b); if(p<0)p=0; tot+=p;
     if(a>b)w+=p;else if(a===b)d+=p;else l+=p;
     if(p>best.p)best={p,s:a+"-"+b};
   }
-  return {w,d,l,best:best.s};
+  return {w:w/tot,d:d/tot,l:l/tot,best:best.s};
 }
 
 /* ---- archetypes & patterns ---- */
@@ -904,12 +996,15 @@ function matchupEngine(A,B,venueHome){
     cong.note=`${A} ${cgA.rest}d rest (${cgA.in14} games/14d)${cgA.sandwich?" SANDWICH":""} vs ${B} ${cgB.rest}d (${cgB.in14}/14d)${cgB.sandwich?" SANDWICH":""}`;
   }
   const script=scriptPredict(stA,stB);
+  if(koMode!=="league") win=50+(win-50)*0.85; // knockout compression: upsets more likely, models less accurate
   const base=Math.round(Math.max(15,Math.min(85,win+form.v+arch.v+h2h.v+cong.v)));
+  const relOf=t=>{const ps=DB.players.filter(p=>p.team===t&&p.xgi_share!=null&&p.xgi_share>0);return ps.length?ps.sort((a,b)=>b.xgi_share-a.xgi_share)[0]:null;};
+  const relA=relOf(A), relB=relOf(B);
   const alerts=DB.players.filter(p=>(p.team===A||p.team===B)&&p.prs>=8&&p.status&&p.status!=="fit"&&p.status!=="unavailable");
   const lowSample=rA.n<8||rB.n<8;
   return {gA:+gA.toFixed(2),gB:+gB.toFixed(2),poisson:{w:+(P.w*scale*100).toFixed(1),d:+(pd*100).toFixed(1),l:+(P.l*scale*100).toFixed(1),best:P.best},
     win:+win.toFixed(1),form,arch,h2h,cong,script,base,alerts,lowSample,blended:rA.blended||rB.blended,nA:rA.n,nB:rB.n,
-    totalG:+(gA+gB).toFixed(2)};
+    totalG:+(gA+gB).toFixed(2),relA,relB};
 }
 function h2hPanel(team){
   const all=[...new Set((HIST||[]).flatMap(m=>[m.home,m.away]))].filter(t2=>t2!==team).sort();
@@ -941,7 +1036,9 @@ function h2hPanel(team){
         <div class="num" style="font-size:32px;font-weight:800;color:var(--accent);margin:10px 0">${E.base}% <span class="small muted" style="font-weight:400">suggested BASE for ${esc(team)}</span></div>
         <div class="flex">
           <span class="tag watch">${esc(E.script.code)}</span><span class="small muted">${esc(E.script.why)} → ${esc(E.script.lean)}</span>
+          <select class="right" onchange="setKoMode(this.value)" title="knockout compresses probabilities toward the coin-flip (upsets likelier, models weaker)"><option value="league" ${koMode==="league"?"selected":""}>League mode</option><option value="ko" ${koMode==="ko"?"selected":""}>Knockout mode</option></select>
         </div>
+        ${(E.relA&&E.relA.xgi_share>0.28)||(E.relB&&E.relB.xgi_share>0.28)?`<p class="small" style="margin-top:6px"><span class="tag miss">⚠ STAR-RELIANT</span> ${[E.relA,E.relB].filter(r=>r&&r.xgi_share>0.28).map(r=>`<b>${esc(r.web_name||r.name)}</b> carries ${Math.round(r.xgi_share*100)}% of ${esc(r.team)}'s xG involvement`).join(" · ")} — widen the PRS cap toward ±18 for this player and apply the transcendent tax (Rule 12) when he's the opponent's whole plan.</p>`:""}
         ${E.lowSample||E.blended?`<p class="small" style="margin-top:6px"><span class="tag miss">LOW SAMPLE</span> <span class="muted">${E.nA}/${E.nB} matches this season — previous-season blend applied. Trust less.</span></p>`:""}
         ${E.alerts.length?`<p class="small" style="margin-top:6px"><span class="tag miss">⚠ AVAILABILITY</span> ${E.alerts.map(p=>esc(p.name)+" ("+esc(p.team)+", PRS "+p.prs+", "+esc(p.status)+")").join(" · ")} — PRS layer applies on top.</p>`:""}
         <div class="flex" style="margin-top:10px"><button class="btn sm" onclick="sendToCalc(${E.base})">Send to Calculator →</button></div>
@@ -1048,6 +1145,57 @@ function vProfile(){
     <table><tr><th>Season</th><th>Pos</th><th>W-D-L</th><th>GF:GA</th><th>Pts</th><th>Final form</th></tr>
     ${trend.slice().reverse().map(r=>`<tr class="rowbtn" onclick="setPlSeason('${r.season}')"><td class="num">${r.season}</td><td class="num"><b>#${r.pos}</b></td><td class="num">${r.w}-${r.d}-${r.l}</td><td class="num">${r.gf}:${r.ga}</td><td class="num" style="color:var(--accent);font-weight:700">${r.pts}</td><td>${formBadges(r.form)}</td></tr>`).join("")}</table>
   </div>`;
+}
+
+/* ---------- SCOUTING REPORT ---------- */
+let scoutTeam=null;
+function vScout(){
+  if(!scoutTeam){
+    const clubs=[...DB.plt].sort((a,b)=>a.name.localeCompare(b.name));
+    return `<div class="panel"><h2>Scouting Report — pick a club</h2>
+    <p class="small muted" style="margin-bottom:10px">Every club dossier: coach, squad by position, PRS engine ratings with components, team reliance. Refreshes every 6 hours.</p></div>
+    <div class="grid cards">${clubs.map(c=>{
+      const coach=DB.coaches.find(x=>x.team===c.name);
+      const top=DB.players.filter(p=>p.team===c.name).sort((a,b)=>b.prs-a.prs||((b.total_points||0)-(a.total_points||0))).slice(0,3);
+      return `<div class="card rowbtn" onclick="scoutTeam='${esc(c.name).replace(/'/g,"\\'")}';render()">
+      <div class="k">${esc(c.short_name||"")}</div><div style="font-size:17px;font-weight:800">${esc(c.name)}</div>
+      <div class="s">${coach?esc(coach.name):"—"}</div>
+      <div class="s" style="margin-top:6px">${top.map(p=>`${esc(p.web_name||p.name)} <b class="num" style="color:var(--accent)">${p.prs}</b>`).join(" · ")}</div></div>`}).join("")}</div>`;
+  }
+  const team=scoutTeam;
+  const coach=DB.coaches.find(x=>x.team===team);
+  const sq=DB.players.filter(p=>p.team===team);
+  const rel=[...sq].filter(p=>p.xgi_share>0).sort((a,b)=>b.xgi_share-a.xgi_share).slice(0,5);
+  const axis=v=>v==null?"—":`${v}/10`;
+  const posOrder=["GK","DEF","MID","FWD"];
+  const rowsFor=pos=>sq.filter(p=>p.position===pos).sort((a,b)=>b.prs-a.prs||((b.minutes||0)-(a.minutes||0))).map(p=>{
+    const c=p.prs_components||{};
+    const mism=p.suggested_prs!=null&&Math.abs(p.prs-p.suggested_prs)>=2;
+    return `<tr><td><b title="${esc(p.name)}">${esc(p.web_name||p.name)}</b></td>
+    <td><select onchange="patchPlayer(${p.id},{prs:+this.value})" style="padding:2px 5px;font-weight:700;color:${p.prs>=9?"var(--red)":p.prs>=7?"var(--accent)":"var(--text)"}">${[10,9,8,7,6,5,4,3,2,1].map(n=>`<option ${p.prs===n?"selected":""}>${n}</option>`).join("")}</select>${p.hot_streak?" 🔥":""}</td>
+    <td class="num ${mism?"neg":"muted"}" title="role ${c.role??"?"} · output ${c.output_pct??"?"} · team share ${c.team_share??"?"} · window ${esc(c.window||"")}">${p.suggested_prs??"—"}</td>
+    <td>${statusTag(p)}</td>
+    <td class="num muted small">${p.recent_minutes!=null?p.recent_minutes+"'":(p.minutes??"—")}</td>
+    <td class="num">${p.goals!=null?p.goals+"+"+p.assists:"—"}</td>
+    <td class="num muted">${p.xg!=null?((+p.xg)+(+p.xa||0)).toFixed(1):"—"}</td>
+    <td class="num muted small">${p.xgi_share>0?Math.round(p.xgi_share*100)+"%":"—"}</td></tr>`;}).join("");
+  return `
+  <div class="flex" style="margin-bottom:4px">
+    <button class="btn ghost sm" onclick="scoutTeam=null;render()">← Clubs</button>
+    <h2 style="color:var(--text);font-size:20px;font-weight:800">${esc(team)} — Scouting Report</h2>
+    <button class="btn ghost sm right" onclick="profileTeam='${esc(team).replace(/'/g,"\\'")}';h2hOpp=null;go('pltable')">Team profile & matchup →</button>
+  </div>
+  <div class="panel"><h2>Coach</h2>
+    ${coach?`<div class="flex"><div><b style="font-size:16px">${esc(coach.name)}</b><p class="small muted" style="margin-top:4px">${esc(coach.formations||"formations —")}</p></div>
+    <div class="right small num">PRESS ${axis(coach.press)} · POSS ${axis(coach.poss)} · RISK ${axis(coach.risk)} · ADAPT ${axis(coach.adapt)}</div></div>
+    ${coach.notes?`<p class="small muted" style="margin-top:6px">${esc(coach.notes)}</p>`:""}`:`<p class="muted small">No coach on file.</p>`}
+  </div>
+  <div class="panel"><h2>Reliance — who IS this team</h2>
+    ${rel.length?rel.map(p=>`<div class="flex" style="margin:4px 0"><span style="width:150px" class="small"><b>${esc(p.web_name||p.name)}</b></span><div class="bar" style="flex:1;max-width:280px"><i style="width:${Math.min(100,p.xgi_share*250)}%;background:${p.xgi_share>0.28?"var(--red)":"var(--blue)"}"></i></div><span class="num small muted">${Math.round(p.xgi_share*100)}% of xGI</span>${p.xgi_share>0.28?` <span class="tag miss">STAR-RELIANT</span>`:""}</div>`).join(""):`<p class="muted small">No xG involvement data yet this season.</p>`}
+  </div>
+  ${posOrder.map(pos=>{const r=rowsFor(pos);return r?`<div class="panel" style="padding:6px 10px"><p class="small" style="padding:8px 6px 2px"><b style="color:var(--accent)">${pos}</b></p>
+  <table><tr><th>Player</th><th>PRS</th><th>Sugg.</th><th>Status</th><th>Last-6 min</th><th>G+A</th><th>xGI</th><th>Team %</th></tr>${r}</table></div>`:"";}).join("")}
+  <div class="panel"><p class="small muted">Sugg. = live PRS engine: 45% role security (last-6-GW minutes) + 40% output (xG+xA/90 percentile; points percentile for GK/DEF) + 15% team reliance. No 8+ without a secure role. Hover a suggestion for its components. Your PRS stays authoritative — red means the data disagrees by 2+.</p></div>`;
 }
 
 /* ---------- PLAYERS ---------- */
@@ -1193,6 +1341,7 @@ function vCalc(){
     <label>Visitor origin altitude (m)<input id="c_alt2" type="number" value="0" style="width:100px" oninput="calc()"></label>
     <label>Is your pick the high-altitude side?<select id="c_side" onchange="calc()"><option value="1">Yes (+)</option><option value="-1">No (−)</option><option value="0">No altitude factor</option></select></label>
     <label><span>PRS 8+ in doubt?</span><input type="checkbox" id="c_doubt" style="width:20px;height:20px" onchange="calc()"></label>
+    <label>Competition<select id="c_ko" onchange="calc()"><option value="league">League</option><option value="ko">Knockout (single tie)</option><option value="ko2">Knockout (two legs)</option></select></label>
   </div>
   <div class="calcout" id="c_out"></div>
   <p class="small muted" style="margin-top:10px">Stars auto-suggest from the final number. The lineup rule overrides everything: unresolved PRS 8+ doubt = AVOID until confirmed XIs, no exceptions.</p>
@@ -1204,7 +1353,9 @@ function calc(){
   const side=+document.getElementById("c_side").value;
   const gap=Math.max(0,g("c_alt1")-g("c_alt2"));
   const goals=gap/1000*0.5, ais=side===0?0:Math.round(goals*11)*side;
-  const final=Math.round(base+prs+ais+tms+ctx);
+  let final=Math.round(base+prs+ais+tms+ctx);
+  const ko=document.getElementById("c_ko")?document.getElementById("c_ko").value:"league";
+  if(ko==="ko") final=Math.round(50+(final-50)*0.85);
   const doubt=document.getElementById("c_doubt").checked;
   let stars,action;
   if(doubt){stars="⭐⭐";action="🚫 AVOID — PRS 8+ doubt unresolved. Wait for confirmed lineups (Rodri rule).";}
@@ -1222,7 +1373,9 @@ function calc(){
     </div>
     <div class="big">${final}%</div>
     <div class="stars" style="font-size:22px">${stars}</div>
-    <div style="margin-top:6px;font-weight:700;color:${action.startsWith("🚫")?"var(--red)":"var(--green)"}">${action}</div>`;
+    <div style="margin-top:6px;font-weight:700;color:${action.startsWith("🚫")?"var(--red)":"var(--green)"}">${action}</div>
+    ${ko==="ko"?`<p class="small muted" style="margin-top:6px">Knockout compression applied (−15% toward coin-flip): upsets are likelier and models weaker in one-off ties. Expect heavier rotation in early cup rounds — check the calendar.</p>`:ko==="ko2"?`<p class="small muted" style="margin-top:6px">Two-legged tie: judge the AGGREGATE, not the leg. Leg-1 favorites often manage games; the leg-2 away side knows exactly what it needs.</p>`:""}
+    <p class="small muted" style="margin-top:4px">ENV layer: altitude above · weather counts too — wind 25km/h+ cuts long passing and totals; extreme heat slows tempo (cap weather at ±2-3% context; totals lean stronger than winner lean).</p>`;
 }
 
 /* ---------- IMPORT / EXPORT ---------- */
