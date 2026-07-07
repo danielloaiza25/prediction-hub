@@ -244,6 +244,7 @@ function vDashboard(){
     ${card("Edge vs Market",es.avg==null?"—":(es.avg>0?"+":"")+es.avg.toFixed(1)+"pp",es.n?`${es.n} priced calls`:"log closing odds to measure")}
   </div>
   ${pending.length?`<div class="panel"><h2>Live Calls</h2><table><tr><th>Match</th><th>Pick</th><th>Prob</th><th>Stars</th><th></th></tr>${pending.map(p=>{const f=p.fixture_id?getFx(p.fixture_id):null;const resin=f&&f.finished;return `<tr class="rowbtn" onclick="expandId=${p.id};go('predictions')"><td>${esc(p.match)}</td><td><b>${esc(p.pick)}</b></td><td class="num">${p.final_prob}%</td><td class="stars">${starstr(p.stars)}</td><td>${resin?`<span class="tag hit">RESULT IN ${fxScore(f)} — settle</span>`:p.lineup_watch?'<span class="tag watch">👁 LINEUP WATCH</span>':''}</td></tr>`}).join("")}</table></div>`:""}
+  ${(()=>{const al=DB.players.filter(p=>p.prs>=8&&p.status&&p.status!=="fit"&&p.status!=="unavailable");return al.length?`<div class="panel" style="border-color:var(--red)"><h2 style="color:var(--red)">🚨 PRS 8+ Availability Alerts — auto-detected from FPL feed</h2>${al.map(p=>`<div class="detail"><b>${esc(p.name)}</b> (${esc(p.team)}, PRS ${p.prs}) — ${statusTag(p)} ${p.news?`<span class="small muted">${esc(p.news)}</span>`:""}<p class="small muted" style="margin-top:4px">Cardinal rule: any match involving ${esc(p.team)} = WAIT FOR CONFIRMED LINEUPS.</p></div>`).join("")}</div>`:""})()}
   ${watch.length?`<div class="panel"><h2>⚠ Lineup Watch — no bets before confirmed XIs</h2>${watch.map(p=>`<div class="detail"><b>${esc(p.match)}</b> — ${esc(p.lineup_watch_note||"PRS 8+ player in doubt")}</div>`).join("")}</div>`:""}
   ${DB.settings.legacy_record?`<div class="panel"><h2>Legacy Record — ${esc(legacy.label||"PL/CL")}</h2>
     <p class="muted small">${esc(legacy.note||"")}</p>
@@ -819,15 +820,33 @@ function vProfile(){
 }
 
 /* ---------- PLAYERS ---------- */
-let playerFilter="", showAddPlayer=false, sortKey="prs";
+let playerFilter="", showAddPlayer=false, sortKey="prs", plq="";
+async function syncPlayersNow(){
+  toast("Syncing players from FPL + Understat…");
+  try{ const r=await fetch(SB_URL+"/functions/v1/sync-players"); const d=await r.json();
+    if(d.ok){ toast("Players synced: "+d.updated+" updated, "+d.inserted+" new"); loadAll(); } else toast("Sync failed: "+d.error,false);
+  }catch(e){ toast(e.message,false); }
+}
+const statusTag = p => {
+  const st=p.status||"fit";
+  const cls=st==="fit"?"hit":st==="doubt"?"watch":"miss";
+  const label=st==="doubt"&&p.fitness_pct!=null?`DOUBT ${p.fitness_pct}%`:st.toUpperCase();
+  return `<span class="tag ${cls}" title="${esc(p.news||"")}">${label}</span>${p.news?` <span class="muted small" title="${esc(p.news)}">ℹ</span>`:""}`;
+};
 function vPlayers(){
   const teams=[...new Set(DB.players.map(p=>p.team))].sort();
   let rows=DB.players.filter(p=>!playerFilter||p.team===playerFilter);
-  rows.sort((a,b)=>sortKey==="prs"?b.prs-a.prs:String(a[sortKey]||"").localeCompare(String(b[sortKey]||"")));
+  if(plq) rows=rows.filter(p=>(p.name+" "+(p.web_name||"")).toLowerCase().includes(plq.toLowerCase()));
+  rows.sort((a,b)=>sortKey==="prs"?(b.prs-a.prs)||((b.total_points||0)-(a.total_points||0)):sortKey==="pts"?(b.total_points||0)-(a.total_points||0):String(a[sortKey]||"").localeCompare(String(b[sortKey]||"")));
+  if(!playerFilter&&!plq) rows=rows.filter(p=>p.prs>=7||p.status!=="fit"||p.hot_streak).slice(0,80);
   const scale=DB.settings.prs_scale||[];
+  const lastSync=DB.players.map(p=>p.auto_synced_at).filter(Boolean).sort().pop();
   return `
   <div class="flex">
-    <select onchange="playerFilter=this.value;render()"><option value="">All teams</option>${teams.map(t=>`<option ${playerFilter===t?"selected":""}>${esc(t)}</option>`).join("")}</select>
+    <select onchange="playerFilter=this.value;render()"><option value="">Key players (PRS 7+/flagged)</option>${teams.map(t=>`<option ${playerFilter===t?"selected":""}>${esc(t)}</option>`).join("")}</select>
+    <input placeholder="search player…" value="${esc(plq)}" oninput="plq=this.value;render()" style="width:170px">
+    <span class="muted small">auto-sync every 6h · last ${lastSync?new Date(lastSync).toLocaleString():"never"}</span>
+    <button class="btn ghost sm" onclick="syncPlayersNow()">↻ Sync now</button>
     <button class="btn right" onclick="showAddPlayer=!showAddPlayer;render()">${showAddPlayer?"Cancel":"+ Add Player"}</button>
   </div>
   ${showAddPlayer?`<div class="panel"><div class="formrow">
@@ -840,32 +859,25 @@ function vPlayers(){
     <label>Notes<input id="pl_notes" style="width:260px"></label>
     <button class="btn sm" onclick="addPlayer()">Save</button></div></div>`:""}
   <div class="panel" style="padding:6px 10px"><table>
-    <tr><th onclick="sortKey='name';render()">Player</th><th onclick="sortKey='team';render()">Team</th><th>Pos</th><th onclick="sortKey='prs';render()">PRS ▾</th><th>Impact if absent</th><th>Status</th><th>Modifiers</th><th>Notes</th><th></th></tr>
+    <tr><th onclick="sortKey='name';render()">Player</th><th onclick="sortKey='team';render()">Team</th><th>Pos</th><th onclick="sortKey='prs';render()">PRS ▾</th><th>Sugg.</th><th>Status</th><th onclick="sortKey='pts';render()">Pts</th><th>Min</th><th>G+A</th><th>xG+xA</th><th>Mods</th><th></th></tr>
     ${rows.map(p=>{
-      const tier=scale.find(s=>s.prs===Math.min(p.prs,10))||scale.find(s=>s.prs===4);
       const effPrs = p.hot_streak&&p.prs===10?"11":p.prs;
+      const mism = p.suggested_prs!=null&&Math.abs(p.prs-p.suggested_prs)>=2;
       return `<tr>
-      <td><b>${esc(p.name)}</b></td><td>${esc(p.team)}</td><td class="muted">${esc(p.position||"")}</td>
-      <td><span class="num" style="color:${p.prs>=9?'var(--red)':p.prs>=7?'var(--accent)':'var(--text)'};font-weight:700">${effPrs}</span>${p.hot_streak?' 🔥':''}</td>
-      <td class="small muted">${tier?esc(tier.impact):""}${p.hot_streak&&p.prs===10?' → -12% facing':''}</td>
-      <td><select onchange="patchPlayer(${p.id},{status:this.value,fitness_pct:null})">${["fit","injured","doubt","suspended","bench-only"].map(s=>`<option ${p.status===s?"selected":""}>${s}</option>`).join("")}</select></td>
-      <td class="small">${p.penalty_taker?'<span class="tag pend">PEN</span> ':''}${p.set_piece_taker?'<span class="tag pend">SP</span> ':''}${p.hot_streak?`<span class="tag watch" title="${esc(p.streak_note||"")}">STREAK</span>`:''}</td>
-      <td class="small muted" style="max-width:280px">${esc(p.notes||"")}</td>
+      <td><b title="${esc(p.name)}">${esc(p.web_name||p.name)}</b></td><td class="small">${esc(p.team)}</td><td class="muted small">${esc(p.position||"")}</td>
+      <td><select onchange="patchPlayer(${p.id},{prs:+this.value})" style="padding:3px 6px;font-weight:700;color:${p.prs>=9?'var(--red)':p.prs>=7?'var(--accent)':'var(--text)'}">${[10,9,8,7,6,5,4,3,2,1].map(n=>`<option ${p.prs===n?"selected":""}>${n}</option>`).join("")}</select>${p.hot_streak?' 🔥':''}</td>
+      <td class="num ${mism?'neg':'muted'}" title="data-suggested PRS from league points percentile${mism?' — differs from your manual value by 2+':''}">${p.suggested_prs??"—"}</td>
+      <td>${statusTag(p)}</td>
+      <td class="num">${p.total_points??"—"}</td><td class="num muted small">${p.minutes??"—"}</td>
+      <td class="num">${p.goals!=null?p.goals+"+"+p.assists:"—"}</td>
+      <td class="num muted">${p.xg!=null?(+p.xg+ +(p.xa||0)).toFixed(1):"—"}</td>
+      <td class="small">${p.penalty_taker?'<span class="tag pend">PEN</span>':''}${p.set_piece_taker?'<span class="tag pend">SP</span>':''}${p.hot_streak?`<span class="tag watch" title="${esc(p.streak_note||"")}">STREAK</span>`:''}</td>
       <td><button class="btn ghost sm" onclick="delPlayer(${p.id})">✕</button></td></tr>`}).join("")}
   </table></div>
   <div class="panel"><h2>PRS Scale</h2><table><tr><th>PRS</th><th>Tier</th><th>Win % impact when absent</th></tr>
-  ${scale.map(s=>`<tr><td class="num">${s.prs}${s.prs===4?" or less":""}</td><td>${esc(s.tier)}</td><td class="num">${esc(s.impact)}</td></tr>`).join("")}</table>
-  <p class="small muted" style="margin-top:8px">Modifiers: partial fitness = fraction of penalty · bench-only ≈ half value · role cascade (losing top-2 pen takers = extra -1 to -2%) · hot streak (PRS 10 + 8-game scoring run → treat as PRS 11) · elite depth absorbs +2-3%.</p></div>`;
+  ${scale.map(sc=>`<tr><td class="num">${sc.prs}${sc.prs===4?" or less":""}</td><td>${esc(sc.tier)}</td><td class="num">${esc(sc.impact)}</td></tr>`).join("")}</table>
+  <p class="small muted" style="margin-top:8px">PRS is YOUR judgment — the Sugg. column is a data-grounded starting point (league points percentile, min 600 minutes) and never overwrites your value. Red suggestion = disagrees with you by 2+, worth a look. Status/news auto-sync from the official FPL feed every 6 hours. Modifiers: partial fitness = fraction of penalty · bench-only ≈ half value · role cascade · hot streak (PRS 10 + 8-game run → 11) · elite depth absorbs +2-3%.</p></div>`;
 }
-async function addPlayer(){
-  const g=id=>document.getElementById(id);
-  const body={name:g("pl_name").value,team:g("pl_team").value,position:g("pl_pos").value||null,prs:+g("pl_prs").value,status:g("pl_status").value,penalty_taker:g("pl_pen").checked,hot_streak:g("pl_hot").checked,notes:g("pl_notes").value||null};
-  if(!body.name||!body.team)return toast("Name and team required",false);
-  try{await api("players",{method:"POST",body});showAddPlayer=false;toast("Player added");loadAll();}catch(e){toast(e.message,false)}
-}
-async function patchPlayer(id,body){try{await api("players?id=eq."+id,{method:"PATCH",body});toast("Updated");loadAll();}catch(e){toast(e.message,false)}}
-async function delPlayer(id){if(!confirm("Delete player?"))return;try{await api("players?id=eq."+id,{method:"DELETE"});loadAll();}catch(e){toast(e.message,false)}}
-
 /* ---------- COACHES ---------- */
 let showAddCoach=false;
 function vCoaches(){
