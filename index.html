@@ -491,8 +491,12 @@ async function delAutopsy(id){ if(!confirm("Delete this autopsy?"))return; try{a
 let showAddNews=false, mwSel=null;
 function restDays(team,kick){
   if(!kick)return null;
-  const prev=DB.plf.filter(f=>(f.team_h_name===team||f.team_a_name===team)&&f.kickoff&&f.started&&new Date(f.kickoff)<new Date(kick)).sort((a,b)=>new Date(b.kickoff)-new Date(a.kickoff))[0];
-  return prev?Math.round((new Date(kick)-new Date(prev.kickoff))/864e5):null;
+  const k=new Date(kick);
+  let cands=DB.plf.filter(f=>(f.team_h_name===team||f.team_a_name===team)&&f.kickoff&&f.started&&new Date(f.kickoff)<k).map(f=>new Date(f.kickoff));
+  for(const c of (CAL||[])) if((c.home===team||c.away===team)&&c.kickoff&&new Date(c.kickoff)<k) cands.push(new Date(c.kickoff));
+  if(!cands.length)return null;
+  const prev=cands.sort((a,b)=>b-a)[0];
+  return Math.round((k-prev)/864e5);
 }
 function vMatchweek(){
   if(!DB.plf.length) return "";
@@ -522,6 +526,7 @@ function predictFixture(fid){
   showAddPred=true; go("predictions");
 }
 function vFixtures(){
+  if(CAL===null&&!CALreq){CALreq=true;ensureCalendar().then(()=>{if(TAB==="fixtures")render();}).catch(()=>{});}
   const up = DB.predictions.filter(p=>!p.outcome);
   return plBanner()+`
   <div class="grid cards">
@@ -598,7 +603,7 @@ async function renderPLTable(){
   try{
     await ensureHist();
     if(!plSeason) plSeason = SEASON_LIVE() || seasonList()[0];
-    if(profileTeam) await ensureProfiles(profileTeam);
+    if(profileTeam){ await Promise.all([ensureAllProfiles(), ensureRotation(), ensureCalendar()]); }
     m.innerHTML = profileTeam ? vProfile() : vTable();
   }catch(e){ m.innerHTML = plBanner()+'<div class="panel"><p class="neg">Failed to load: '+esc(e.message)+'</p></div>'; }
   window.scrollTo(0,0);
@@ -691,64 +696,268 @@ function formationRows(st){
   return arr.sort((a,b)=>(+b.time||0)-(+a.time||0)).slice(0,5).map(x=>
     `<tr><td class="num"><b>${esc(x.stat)}</b></td><td class="num">${Math.round((+x.time||0)/tot*100)}% of minutes</td><td class="num">${x.goals??"—"} scored / ${x.against?.goals??"—"} conceded</td><td class="num">${x.xG?(+x.xG).toFixed(1):"—"} xG</td></tr>`).join("");
 }
-async function setH2H(opp){ h2hOpp=opp||null; if(h2hOpp){try{await ensureProfiles(h2hOpp);}catch(e){}} renderPLTable(); }
+async function setH2H(opp){ h2hOpp=opp||null; renderPLTable(); }
 function setH2HVenue(v){ h2hVenue=v; renderPLTable(); }
 function sendToCalc(b){ CALCPRE=b; go("calculator"); toast("Base "+b+"% loaded into calculator"); }
-function baseSuggest(team,opp,homeVenue){
-  const tb=tableFrom(matchesFor(plSeason));
-  const tr=tb.find(r=>r.team===team), orr=tb.find(r=>r.team===opp);
-  if(!tr||!orr||tr.p<5||orr.p<5)return null;
-  const ppg=(w,d2,n)=>n?(3*w+d2)/n:1.3;
-  const A=homeVenue?ppg(tr.hw,tr.hd,tr.hw+tr.hd+tr.hl):ppg(tr.aw,tr.ad,tr.aw+tr.ad+tr.al);
-  const B=homeVenue?ppg(orr.aw,orr.ad,orr.aw+orr.ad+orr.al):ppg(orr.hw,orr.hd,orr.hw+orr.hd+orr.hl);
-  const share=(A+B)>0?A/(A+B):0.5;
-  let base=share*75;
-  const gdadj=Math.max(-6,Math.min(6,((tr.gf-tr.ga)/tr.p-(orr.gf-orr.ga)/orr.p)*3));
-  base+=gdadj;
-  const ms=seasonList().flatMap(s2=>matchesFor(s2)).filter(m=>(m.home===team&&m.away===opp)||(m.home===opp&&m.away===team)).filter(m=>m.fthg!=null).sort((a,b)=>String(b.match_date).localeCompare(String(a.match_date))).slice(0,5);
-  let net=0; for(const m of ms){const gf=m.home===team?m.fthg:m.ftag, ga=m.home===team?m.ftag:m.fthg; net+=gf>ga?1:gf<ga?-1:0;}
-  const h2hadj=Math.max(-5,Math.min(5,net*1.5));
-  base+=h2hadj;
-  base=Math.round(Math.max(20,Math.min(80,base)));
-  return {base,parts:[
-    "venue PPG "+A.toFixed(2)+" vs "+B.toFixed(2)+" → "+Math.round(share*75)+"%",
-    "GD/game "+(gdadj>=0?"+":"")+gdadj.toFixed(1)+"%",
-    "H2H lean "+(h2hadj>=0?"+":"")+h2hadj.toFixed(1)+"% (net "+net+" of last "+ms.length+")",
-    "25% draw baseline reserved"]};
+
+/* ---- engine data loaders ---- */
+let ALLPROF=null, PROFIX={}, ROTIX=null, CAL=null, CALreq=false, DRAWTAB=null;
+async function ensureAllProfiles(){
+  if(ALLPROF)return;
+  const acc=[];
+  for(let off=0;;off+=50){
+    const page=await api("team_profiles?select=team,season,stats,matches&limit=50&offset="+off);
+    acc.push(...page); if(page.length<50)break;
+  }
+  ALLPROF=acc; PROFIX={}; PROFILES={};
+  for(const p of acc){ PROFIX[p.team+"|"+p.season]=p; (PROFILES[p.team] ||= []).push(p); }
+  for(const t in PROFILES) PROFILES[t].sort((a,b)=>a.season.localeCompare(b.season));
+}
+async function ensureRotation(){
+  if(ROTIX)return;
+  const rows=await api("pl_rotation?select=*&limit=2000");
+  ROTIX={};
+  const fxix={};
+  for(const f of DB.plf){ if(f.event){ fxix[f.team_h_name+"|"+f.event]=f; fxix[f.team_a_name+"|"+f.event]=f; } }
+  for(const r of rows){
+    const f=fxix[r.team+"|"+r.event];
+    if(f&&f.kickoff) ROTIX[r.team+"|"+f.kickoff.slice(0,10)]=r.rotation;
+    ROTIX[r.season+"|"+r.event+"|"+r.team]=r.rotation;
+  }
+}
+async function ensureCalendar(){
+  if(CAL)return;
+  CAL=await api("team_calendar?select=*&order=event_date.asc&limit=2000");
+}
+function drawEmp(favP){
+  if(!DRAWTAB){
+    DRAWTAB=[];
+    const rows=(HIST||[]).filter(m=>m.b365h&&m.b365d&&m.b365a&&m.fthg!=null);
+    const b=[0.40,0.48,0.56,0.64,0.72,0.85,1.01];
+    for(let i=0;i<b.length-1;i++){
+      const set=rows.filter(m=>{const s2=1/m.b365h+1/m.b365d+1/m.b365a;const p=Math.max((1/m.b365h)/s2,(1/m.b365a)/s2);return p>=b[i]&&p<b[i+1];});
+      DRAWTAB.push({lo:b[i],hi:b[i+1],n:set.length,dr:set.length?set.filter(m=>m.fthg===m.ftag).length/set.length:0.25});
+    }
+  }
+  const hit=DRAWTAB.find(x=>favP>=x.lo&&favP<x.hi);
+  return hit&&hit.n>30?hit.dr:0.25;
+}
+
+/* ---- ratings & poisson ---- */
+function teamRate(team,season){
+  const pr=PROFIX[team+"|"+season];
+  if(!pr||!pr.matches||!pr.matches.length)return null;
+  const ms=pr.matches, n=ms.length, w=i=>Math.pow(0.93,n-1-i);
+  let hx=0,hxa=0,hw=0,ax=0,axa=0,aw=0;
+  ms.forEach((m,i)=>{const W=w(i); if(m.side==="h"){hx+=m.xg*W;hxa+=m.xga*W;hw+=W;} else {ax+=m.xg*W;axa+=m.xga*W;aw+=W;}});
+  return {ah:hw?hx/hw:1.4, dh:hw?hxa/hw:1.4, aa:aw?ax/aw:1.2, da:aw?axa/aw:1.5, n};
+}
+function blendRate(team,season){
+  const cur=teamRate(team,season);
+  const seasons=Object.keys(PROFIX).filter(k=>k.startsWith(team+"|")).map(k=>k.split("|")[1]).sort();
+  const prevSeason=seasons.filter(x=>x<season).pop();
+  const prev=prevSeason?teamRate(team,prevSeason):null;
+  if(cur&&(!prev||cur.n>=12))return {...cur,blended:false};
+  if(cur&&prev){ const w=cur.n/(cur.n+8);
+    return {ah:cur.ah*w+prev.ah*(1-w), dh:cur.dh*w+prev.dh*(1-w), aa:cur.aa*w+prev.aa*(1-w), da:cur.da*w+prev.da*(1-w), n:cur.n, blended:true};
+  }
+  return prev?{...prev,n:0,blended:true}:null;
+}
+function leagueAvg(season){
+  let sx=0,c=0;
+  for(const p of ALLPROF) if(p.season===season) for(const m of p.matches){sx+=m.xg;c++;}
+  return c?sx/c:1.4;
+}
+function pois(l,k){let p=Math.exp(-l);for(let i=1;i<=k;i++)p*=l/i;return p;}
+function poissonWDL(gA,gB){
+  let w=0,d=0,l=0,best={p:0,s:"1-1"};
+  for(let a=0;a<=7;a++)for(let b=0;b<=7;b++){
+    const p=pois(gA,a)*pois(gB,b);
+    if(a>b)w+=p;else if(a===b)d+=p;else l+=p;
+    if(p>best.p)best={p,s:a+"-"+b};
+  }
+  return {w,d,l,best:best.s};
+}
+
+/* ---- archetypes & patterns ---- */
+function archOf(st){
+  const a=[]; if(!st)return a;
+  if(st._ppda!=null){ if(st._ppda<9.5)a.push("HIGH-PRESS"); else if(st._ppda>12.5)a.push("LOW-BLOCK"); }
+  const sit=st.situation||{}; const tot=Object.values(sit).reduce((x,y)=>x+(y.goals||0),0)||1;
+  const sp=((sit["From corner"]||{}).goals||0)+((sit["Set piece"]||{}).goals||0)+((sit["Direct freekick"]||{}).goals||0);
+  if(sp/tot>0.3)a.push("SET-PIECE");
+  const spd=st.attackSpeed||{}; const stot=Object.values(spd).reduce((x,y)=>x+(y.goals||0),0)||1;
+  if(((spd["Fast"]||{}).goals||0)/stot>0.25)a.push("TRANSITION");
+  if(st._deep_per_match>=8)a.push("TERRITORIAL");
+  return a;
+}
+function rotWeight(team,date){
+  if(!ROTIX)return 1;
+  const r=ROTIX[team+"|"+date];
+  return r!=null&&r>=4?0.3:1;
+}
+function formAdj(team,season){
+  const pr=PROFIX[team+"|"+season]; if(!pr||!pr.matches.length)return {v:0,n:0};
+  const last=pr.matches.slice(-6);
+  let sum=0,wt=0;
+  last.forEach((m,i)=>{const W=(i+1)*rotWeight(team,m.date); sum+=(m.xg-m.xga)*W; wt+=W;});
+  const v=wt?Math.max(-4,Math.min(4,(sum/wt)*2.2)):0;
+  return {v:+v.toFixed(1),n:last.length};
+}
+function archPerf(team,arch){
+  let pts=0,n=0,allPts=0,allN=0;
+  for(const p of (PROFILES[team]||[])){
+    for(const m of p.matches){
+      const res=m.result==="w"?3:m.result==="d"?1:0;
+      allPts+=res;allN++;
+      const op=PROFIX[m.opp+"|"+p.season];
+      if(op&&archOf(op.stats).includes(arch)){pts+=res;n++;}
+    }
+  }
+  if(!n||!allN)return {v:0,n:0};
+  const d=(pts/n)-(allPts/allN);
+  return {v:+Math.max(-4,Math.min(4,d*3)).toFixed(1),n};
+}
+function h2hEvidence(A,B){
+  const meets=[];
+  for(const p of (PROFILES[A]||[])) for(const m of p.matches) if(m.opp===B) meets.push(m);
+  if(!meets.length)return {v:0,n:0};
+  let sum=0,wt=0;
+  meets.forEach((m,i)=>{const W=i+1; sum+=(m.xg-m.xga)*W; wt+=W;});
+  return {v:+Math.max(-3,Math.min(3,(sum/wt)*1.5)).toFixed(1),n:meets.length};
+}
+function allMatchDates(team){
+  const ds=[];
+  for(const f of DB.plf) if(f.started&&f.kickoff&&(f.team_h_name===team||f.team_a_name===team)) ds.push(f.kickoff);
+  for(const c of (CAL||[])) if(c.kickoff&&(c.home===team||c.away===team)) ds.push(c.kickoff);
+  return ds.sort();
+}
+function congestionAt(team,dateStr){
+  const d=dateStr?new Date(dateStr):new Date();
+  const ds=allMatchDates(team).map(x=>new Date(x));
+  const prior=ds.filter(x=>x<d&&(d-x)<45*864e5);
+  const in14=prior.filter(x=>(d-x)<=14*864e5).length;
+  const rest=prior.length?Math.round((d-prior[prior.length-1])/864e5):null;
+  const next=ds.find(x=>x>d);
+  const sandwich=next?(next-d)<=4*864e5:false;
+  return {in14,rest,sandwich};
+}
+function scriptPredict(stA,stB,prA,prB){
+  const aA=archOf(stA), aB=archOf(stB);
+  const topForm=st=>{const f=Object.values((st&&st.formation)||{}).sort((x,y)=>(+y.time||0)-(+x.time||0))[0];return f?f.stat:null;};
+  const fA=topForm(stA), fB=topForm(stB);
+  if(aA.includes("HIGH-PRESS")&&aB.includes("TRANSITION"))return {code:"E PRESS TRAP",why:"your side presses high into a fast-transition outlet — tail risk",lean:"BTTS Yes"};
+  if(aB.includes("HIGH-PRESS")&&aA.includes("TRANSITION"))return {code:"E PRESS TRAP (favorable)",why:"opponent presses into YOUR transition threat",lean:"BTTS Yes"};
+  if(aB.includes("LOW-BLOCK")&&(aA.includes("TERRITORIAL")||aA.includes("HIGH-PRESS")))return {code:"A SIEGE",why:"possession/territory vs a low block — draws spike, favorites overpriced",lean:"Under 2.5"};
+  if(aA.includes("LOW-BLOCK")&&(aB.includes("TERRITORIAL")||aB.includes("HIGH-PRESS")))return {code:"A SIEGE (you defend it)",why:"you are the block — chaos favors you late",lean:"Under 2.5"};
+  if(aA.includes("HIGH-PRESS")&&aB.includes("HIGH-PRESS"))return {code:"B OPEN EXCHANGE",why:"both press high — quality expresses, game opens",lean:"Over 2.5 / BTTS"};
+  if(fA&&fB&&fA[0]==="3"&&fB&&/4-2-3-1|4-3-3/.test(fB))return {code:"D WING OVERLOAD",why:`back-3 wing-backs (${fA}) vs narrow ${fB}`,lean:"Moderate"};
+  if(fA&&fB&&fA===fB)return {code:"C MIRROR",why:`same shape (${fA}) — PRS weight increases ~50%`,lean:"Moderate"};
+  return {code:"C MIRROR-ish",why:"no dominant style collision detected",lean:"Follow expected goals"};
+}
+
+/* ---- the matchup engine ---- */
+function matchupEngine(A,B,venueHome){
+  const season=plSeason;
+  const rA=blendRate(A,season), rB=blendRate(B,season);
+  if(!rA||!rB)return null;
+  const L=leagueAvg(season)||1.4;
+  const gA=venueHome? rA.ah*rB.da/L : rA.aa*rB.dh/L;
+  const gB=venueHome? rB.aa*rA.dh/L : rB.ah*rA.da/L;
+  const P=poissonWDL(gA,gB);
+  const emp=drawEmp(Math.max(P.w,P.l));
+  const pd=(P.d+emp)/2;
+  const scale=(1-pd)/(P.w+P.l||1);
+  let win=P.w*scale*100;
+  const fa=formAdj(A,season), fb=formAdj(B,season);
+  const form={v:+Math.max(-4,Math.min(4,fa.v-fb.v)).toFixed(1),n:Math.min(fa.n,fb.n)};
+  const stA=(PROFIX[A+"|"+season]||{}).stats, stB=(PROFIX[B+"|"+season]||{}).stats;
+  const aB=archOf(stB);
+  let arch={v:0,n:0};
+  for(const ar of aB){const ap=archPerf(A,ar); if(Math.abs(ap.v)>Math.abs(arch.v))arch={...ap,vs:ar};}
+  const h2h=h2hEvidence(A,B);
+  const cgA=congestionAt(A,null), cgB=congestionAt(B,null);
+  let cong={v:0,note:""};
+  if(cgA.rest!=null&&cgB.rest!=null&&cgA.rest<20&&cgB.rest<20){
+    cong.v=+Math.max(-3,Math.min(3,(Math.min(cgA.rest,9)-Math.min(cgB.rest,9))*0.7)).toFixed(1);
+    cong.note=`${A} ${cgA.rest}d rest (${cgA.in14} games/14d)${cgA.sandwich?" SANDWICH":""} vs ${B} ${cgB.rest}d (${cgB.in14}/14d)${cgB.sandwich?" SANDWICH":""}`;
+  }
+  const script=scriptPredict(stA,stB);
+  const base=Math.round(Math.max(15,Math.min(85,win+form.v+arch.v+h2h.v+cong.v)));
+  const alerts=DB.players.filter(p=>(p.team===A||p.team===B)&&p.prs>=8&&p.status&&p.status!=="fit"&&p.status!=="unavailable");
+  const lowSample=rA.n<8||rB.n<8;
+  return {gA:+gA.toFixed(2),gB:+gB.toFixed(2),poisson:{w:+(P.w*scale*100).toFixed(1),d:+(pd*100).toFixed(1),l:+(P.l*scale*100).toFixed(1),best:P.best},
+    win:+win.toFixed(1),form,arch,h2h,cong,script,base,alerts,lowSample,blended:rA.blended||rB.blended,nA:rA.n,nB:rB.n,
+    totalG:+(gA+gB).toFixed(2)};
 }
 function h2hPanel(team){
   const all=[...new Set((HIST||[]).flatMap(m=>[m.home,m.away]))].filter(t2=>t2!==team).sort();
-  const opts='<option value="">— pick opponent —</option>'+all.map(o=>`<option ${o===h2hOpp?"selected":""}>${esc(o)}</option>`).join("");
+  const opts=`<option value="">— pick opponent —</option>`+all.map(o=>`<option ${o===h2hOpp?"selected":""}>${esc(o)}</option>`).join("");
   let body="";
-  if(h2hOpp){
-    const ms=seasonList().flatMap(s2=>matchesFor(s2)).filter(m=>(m.home===team&&m.away===h2hOpp)||(m.home===h2hOpp&&m.away===team)).filter(m=>m.fthg!=null).sort((a,b)=>String(b.match_date).localeCompare(String(a.match_date)));
-    let w=0,d=0,l=0;
-    for(const m of ms){const gf=m.home===team?m.fthg:m.ftag, ga=m.home===team?m.ftag:m.fthg; if(gf>ga)w++;else if(gf<ga)l++;else d++;}
-    const rowsH=ms.slice(0,8).map(m=>{const gf=m.home===team?m.fthg:m.ftag, ga=m.home===team?m.ftag:m.fthg;
-      return `<tr><td class="num small">${m.match_date||""} <span class="muted">${m.season}</span></td><td>${esc(m.home)} <b class="num">${m.fthg}-${m.ftag}</b> ${esc(m.away)}</td><td>${gf>ga?'<span class="tag hit">W</span>':gf<ga?'<span class="tag miss">L</span>':'<span class="tag pend">D</span>'}</td></tr>`}).join("");
-    const sug=baseSuggest(team,h2hOpp,h2hVenue==="home");
-    const pa=(PROFILES[team]||[]).find(p=>p.season===plSeason), pb=(PROFILES[h2hOpp]||[]).find(p=>p.season===plSeason);
-    let collide="";
-    if(pa&&pb&&pa.stats.timing&&pb.stats.timing){
-      const bands=["1-15","16-30","31-45","46-60","61-75","76+"];
-      const myBest=bands.reduce((a,b)=>((pa.stats.timing[b]||{}).goals||0)>((pa.stats.timing[a]||{}).goals||0)?b:a);
-      const oppWorst=bands.reduce((a,b)=>(((pb.stats.timing[b]||{}).against||{}).goals||0)>(((pb.stats.timing[a]||{}).against||{}).goals||0)?b:a);
-      collide=`<p class="small" style="margin-top:8px"><b class="muted">SCORING WINDOW:</b> ${esc(team)} scores most in <b class="pos">${myBest}'</b> · ${esc(h2hOpp)} concedes most in <b class="neg">${oppWorst}'</b>${myBest===oppWorst?' — <b style="color:var(--accent)">ALIGNED ✓</b>':''}</p>
-      <p class="small" style="margin-top:4px"><b class="muted">STYLES:</b> ${styleChips(pa.stats)||'—'} <span class="muted">vs</span> ${styleChips(pb.stats)||'—'}</p>`;
-    }
-    body=`<p style="margin:8px 0"><b>H2H (${ms.length} meetings, 5 seasons):</b> <span class="pos num">${w}W</span> <span class="num muted">${d}D</span> <span class="neg num">${l}L</span> <span class="muted small">from ${esc(team)}'s side</span></p>
-    <table>${rowsH}</table>
-    ${collide}
-    <div class="detail" style="margin-top:10px">
-      <div class="flex"><b>Suggested BASE probability — ${esc(team)} to win</b>
-      <select class="right" onchange="setH2HVenue(this.value)"><option value="home" ${h2hVenue==="home"?"selected":""}>${esc(team)} at home</option><option value="away" ${h2hVenue==="away"?"selected":""}>${esc(team)} away</option></select></div>
-      ${sug?`<div class="num" style="font-size:30px;font-weight:800;color:var(--accent);margin:6px 0">${sug.base}%</div>
-      <p class="small muted">${sug.parts.join(" · ")}</p>
-      <div class="flex" style="margin-top:8px"><button class="btn sm" onclick="sendToCalc(${sug.base})">Send to Calculator →</button></div>
-      <p class="small muted" style="margin-top:6px">BASE layer only — PRS / AIS / TMS / context still apply on top.</p>`:'<p class="muted small">Not enough data in the selected season for both teams.</p>'}
-    </div>`;
+  if(h2hOpp&&ALLPROF){
+    const E=matchupEngine(team,h2hOpp,h2hVenue==="home");
+    if(E){
+      const bar=(w,d,l)=>`<div style="display:flex;height:22px;border-radius:6px;overflow:hidden;margin:8px 0;font-size:11px;font-weight:700">
+        <div style="width:${w}%;background:var(--green);display:flex;align-items:center;justify-content:center;color:#0b0e13">${w}%</div>
+        <div style="width:${d}%;background:var(--muted);display:flex;align-items:center;justify-content:center;color:#0b0e13">${d}%</div>
+        <div style="width:${l}%;background:var(--red);display:flex;align-items:center;justify-content:center;color:#0b0e13">${l}%</div></div>`;
+      const comp=(label,o,extra)=>`<tr><td class="small">${label}${extra?` <span class="muted small">${extra}</span>`:""}</td><td class="num ${o.v>0?"pos":o.v<0?"neg":"muted"}">${o.v>0?"+":""}${o.v}%</td><td class="muted small num">${o.n!=null?"n="+o.n:""}</td></tr>`;
+      const ms=seasonList().flatMap(s2=>matchesFor(s2)).filter(m=>(m.home===team&&m.away===h2hOpp)||(m.home===h2hOpp&&m.away===team)).filter(m=>m.fthg!=null).sort((a,b)=>String(b.match_date).localeCompare(String(a.match_date)));
+      body=`
+      <div class="detail" style="margin-top:10px">
+        <div class="flex"><b>Pattern-collision engine — ${esc(team)} ${h2hVenue==="home"?"(H)":"(A)"} vs ${esc(h2hOpp)}</b>
+        <select class="right" onchange="setH2HVenue(this.value)"><option value="home" ${h2hVenue==="home"?"selected":""}>${esc(team)} at home</option><option value="away" ${h2hVenue==="away"?"selected":""}>${esc(team)} away</option></select></div>
+        <p class="small muted" style="margin-top:6px">Expected goals: <b class="num" style="color:var(--text)">${E.gA} — ${E.gB}</b> · most likely score <b class="num">${E.poisson.best}</b> · total ${E.totalG} → <b>${E.totalG>2.9?"Over 2.5 lean":E.totalG<2.35?"Under 2.5 lean":"no totals edge"}</b></p>
+        ${bar(E.poisson.w,E.poisson.d,E.poisson.l)}
+        <p class="small muted">win / draw / loss from xG-weighted Poisson, draws calibrated on ${(HIST||[]).length} historical matches</p>
+        <table style="margin-top:8px">
+          <tr><th>Component</th><th>Adj</th><th>Sample</th></tr>
+          ${comp("Rotation-cleaned form (last 6, xG-diff)",E.form)}
+          ${comp("Pattern vs opponent archetype",E.arch,E.arch.vs?("vs "+E.arch.vs):"no archetype signal")}
+          ${comp("H2H evidence (xG-diff of meetings, not results)",E.h2h)}
+          ${comp("Congestion / rest",{v:E.cong.v,n:null},E.cong.note)}
+        </table>
+        <div class="num" style="font-size:32px;font-weight:800;color:var(--accent);margin:10px 0">${E.base}% <span class="small muted" style="font-weight:400">suggested BASE for ${esc(team)}</span></div>
+        <div class="flex">
+          <span class="tag watch">${esc(E.script.code)}</span><span class="small muted">${esc(E.script.why)} → ${esc(E.script.lean)}</span>
+        </div>
+        ${E.lowSample||E.blended?`<p class="small" style="margin-top:6px"><span class="tag miss">LOW SAMPLE</span> <span class="muted">${E.nA}/${E.nB} matches this season — previous-season blend applied. Trust less.</span></p>`:""}
+        ${E.alerts.length?`<p class="small" style="margin-top:6px"><span class="tag miss">⚠ AVAILABILITY</span> ${E.alerts.map(p=>esc(p.name)+" ("+esc(p.team)+", PRS "+p.prs+", "+esc(p.status)+")").join(" · ")} — PRS layer applies on top.</p>`:""}
+        <div class="flex" style="margin-top:10px"><button class="btn sm" onclick="sendToCalc(${E.base})">Send to Calculator →</button></div>
+        <p class="small muted" style="margin-top:6px">BASE layer only — apply PRS / AIS / TMS / context on top. The script suggestion feeds your TMS read.</p>
+      </div>
+      <details style="margin-top:8px"><summary class="small muted" style="cursor:pointer">Raw H2H results (evidence, not gospel — ${ms.length} meetings)</summary>
+      <table style="margin-top:6px">${ms.slice(0,8).map(m=>{const gf=m.home===team?m.fthg:m.ftag, ga=m.home===team?m.ftag:m.fthg;
+        return `<tr><td class="num small">${m.match_date||""} <span class="muted">${m.season}</span></td><td>${esc(m.home)} <b class="num">${m.fthg}-${m.ftag}</b> ${esc(m.away)}</td><td>${gf>ga?`<span class="tag hit">W</span>`:gf<ga?`<span class="tag miss">L</span>`:`<span class="tag pend">D</span>`}</td></tr>`}).join("")}</table></details>`;
+    } else body=`<p class="muted small">Not enough profile data for this pairing in ${esc(plSeason)}.</p>`;
   }
-  return `<div class="panel"><div class="flex"><h2>Head-to-Head & Matchup</h2><select class="right" onchange="setH2H(this.value)">${opts}</select></div>${body||'<p class="muted small">Pick an opponent: H2H record, style collision, scoring-window alignment, and a data-grounded base probability for the pipeline.</p>'}</div>`;
+  return `<div class="panel"><div class="flex"><h2>Matchup Engine</h2><select class="right" onchange="setH2H(this.value)">${opts}</select></div>${body||`<p class="muted small">Pick an opponent: xG-based win/draw/loss, rotation-cleaned form, archetype patterns from 5 seasons, congestion, expected game script, and a suggested base probability.</p>`}</div>`;
+}
+function calendarPanel(team){
+  if(!CAL)return "";
+  const now=new Date();
+  const mine=CAL.filter(c=>c.home===team||c.away===team);
+  const past=mine.filter(c=>c.kickoff&&new Date(c.kickoff)<now).slice(-5);
+  const next=mine.filter(c=>c.kickoff&&new Date(c.kickoff)>=now).slice(0,5);
+  const plNext=DB.plf.filter(f=>!f.started&&f.kickoff&&(f.team_h_name===team||f.team_a_name===team)).slice(0,5)
+    .map(f=>({comp:"PL",round:"MW"+f.event,kickoff:f.kickoff,home:f.team_h_name,away:f.team_a_name}));
+  const upcoming=[...next,...plNext].sort((a,b)=>new Date(a.kickoff)-new Date(b.kickoff)).slice(0,6);
+  // congestion sensitivity: PL results split by rest days (using all-comp calendar)
+  const plms=DB.plf.filter(f=>f.finished&&(f.team_h_name===team||f.team_a_name===team)&&f.kickoff);
+  let cN=0,cP=0,rN=0,rP=0;
+  for(const f of plms){
+    const cg=congestionAt(team,f.kickoff);
+    if(cg.rest==null)continue;
+    const home=f.team_h_name===team;
+    const pts=(home?f.team_h_score>f.team_a_score:f.team_a_score>f.team_h_score)?3:(f.team_h_score===f.team_a_score?1:0);
+    if(cg.rest<=4){cN++;cP+=pts;} else {rN++;rP+=pts;}
+  }
+  const chip=c=>`<span class="tag ${c==="PL"?"pend":c==="UCL"?"watch":c==="FA Cup"||c==="EFL Cup"?"hit":"avoid"}" style="margin-right:6px">${esc(c)}</span>`;
+  return `<div class="panel"><h2>Calendar & Congestion — all competitions</h2>
+  ${upcoming.length?`<p class="small muted" style="margin-bottom:4px">NEXT UP:</p>${upcoming.map(c=>`<div class="flex" style="margin:3px 0">${chip(c.comp)}<span class="num small">${new Date(c.kickoff).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}</span><span class="small">${esc(c.home)} vs ${esc(c.away)}</span></div>`).join("")}`:`<p class="muted small">No upcoming fixtures on the calendar yet.</p>`}
+  ${past.length?`<p class="small muted" style="margin:10px 0 4px">RECENT (cups/Europe):</p>${past.map(c=>`<div class="flex" style="margin:3px 0">${chip(c.comp)}<span class="num small">${c.event_date||""}</span><span class="small">${esc(c.home)} <b class="num">${c.home_score??""}${c.home_score!=null?"-":""}${c.away_score??""}</b> ${esc(c.away)}</span></div>`).join("")}`:""}
+  ${(cN>=3&&rN>=3)?`<p class="small" style="margin-top:10px"><b class="muted">CONGESTION SENSITIVITY (PL, ${plms.length} matches):</b> ≤4 days rest → <b class="num ${cP/cN<rP/rN?"neg":"pos"}">${(cP/cN).toFixed(2)} PPG</b> (${cN} games) vs rested → <b class="num">${(rP/rN).toFixed(2)} PPG</b> (${rN}) ${cP/cN<rP/rN-0.4?`<span class="tag miss">FATIGUE-SENSITIVE</span>`:cP/cN>rP/rN?`<span class="tag hit">HANDLES LOAD</span>`:""}</p>`:`<p class="small muted" style="margin-top:10px">Congestion sensitivity: needs more matches with short rest this season (LOW SAMPLE).</p>`}
+  </div>`;
 }
 function refPanel(){
   const agg={};
@@ -812,6 +1021,7 @@ function vProfile(){
     <table><tr><th>Formation</th><th>Usage</th><th>Goals</th><th>Attack xG</th></tr>${formationRows(st)}</table>
     ${coach?`<p class="small" style="margin-top:10px"><b class="muted">COACH:</b> ${esc(coach.name)}${coach.formations?" · "+esc(coach.formations):""}${coach.press?` · TMS axes: PRESS ${coach.press} / POSS ${coach.poss} / RISK ${coach.risk} / ADAPT ${coach.adapt}`:""}</p>`:""}
   </div>
+  ${calendarPanel(team)}
   ${h2hPanel(team)}
   <div class="panel"><h2>Season-by-season (last ${trend.length})</h2>
     <table><tr><th>Season</th><th>Pos</th><th>W-D-L</th><th>GF:GA</th><th>Pts</th><th>Final form</th></tr>
