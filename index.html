@@ -255,7 +255,7 @@ async function scanWeek(){
   const out=document.getElementById("scanout");
   if(out)out.innerHTML='<p class="muted small">Scanning — loading five seasons of data…</p>';
   try{
-    await Promise.all([ensureHist(),ensureAllProfiles(),ensureRotation(),ensureCalendar()]);
+    await Promise.all([ensureHist(),ensureAllProfiles(),ensureRotation(),ensureCalendar(),ensureDossiers()]);
     if(!plSeason) plSeason=SEASON_LIVE()||seasonList()[0];
     const ups=DB.plf.filter(f=>!f.started&&f.kickoff&&new Date(f.kickoff)>Date.now()).sort((a,b)=>new Date(a.kickoff)-new Date(b.kickoff)).slice(0,12);
     if(!ups.length){SCAN=[];if(out)out.innerHTML='<p class="muted small">No upcoming fixtures scheduled yet — the scan lights up once the season fixtures load.</p>';return;}
@@ -697,7 +697,7 @@ async function renderPLTable(){
   try{
     await ensureHist();
     if(!plSeason) plSeason = SEASON_LIVE() || seasonList()[0];
-    if(profileTeam){ await Promise.all([ensureAllProfiles(), ensureRotation(), ensureCalendar()]); } else { await ensureCalendar(); }
+    if(profileTeam){ await Promise.all([ensureAllProfiles(), ensureRotation(), ensureCalendar(), ensureDossiers()]); } else { await ensureCalendar(); }
     m.innerHTML = profileTeam ? vProfile() : vTable();
   }catch(e){ m.innerHTML = plBanner()+'<div class="panel"><p class="neg">Failed to load: '+esc(e.message)+'</p></div>'; }
   window.scrollTo(0,0);
@@ -791,7 +791,7 @@ function styleChips(st){
   if(st._deep_per_match!=null) chips.push([st._deep_per_match>=8?"TERRITORIAL":"COUNTER-PUNCHING", "pend", st._deep_per_match+" deep completions/match"]);
   const sit=st.situation||{};
   const tot=Object.values(sit).reduce((a,x)=>a+(x.goals||0),0)||1;
-  const sp=((sit["From corner"]?.goals||0)+(sit["Set piece"]?.goals||0)+(sit["Direct freekick"]?.goals||0));
+  const sp=((sit["FromCorner"]?.goals||0)+(sit["SetPiece"]?.goals||0)+(sit["DirectFreekick"]?.goals||0));
   if(sp/tot>0.3) chips.push(["SET-PIECE RELIANT ("+Math.round(sp/tot*100)+"%)","watch","goals from corners/set pieces/free kicks"]);
   const spd=st.attackSpeed||{};
   const stot=Object.values(spd).reduce((a,x)=>a+(x.goals||0),0)||1;
@@ -811,7 +811,20 @@ function setH2HVenue(v){ h2hVenue=v; renderPLTable(); }
 function sendToCalc(b){ CALCPRE=b; go("calculator"); toast("Base "+b+"% loaded into calculator"); }
 
 /* ---- engine data loaders ---- */
-let ALLPROF=null, PROFIX={}, ROTIX=null, CAL=null, CALreq=false, DRAWTAB=null;
+let ALLPROF=null, PROFIX={}, ROTIX=null, CAL=null, CALreq=false, DRAWTAB=null, DOSS=null;
+async function ensureDossiers(){ if(!DOSS){ const rows=await api("club_dossiers?select=team,dossier"); DOSS={}; for(const r of rows) DOSS[r.team]=r.dossier; } }
+const BIG6=["Arsenal","Chelsea","Liverpool","Man City","Man Utd","Spurs"];
+function dossierAdj(A,B,venueHome){
+  const d=DOSS&&DOSS[A]; if(!d) return {v:0,notes:[],card:null};
+  const notes=[]; let v=0;
+  const mo=String(new Date().getMonth()+1);
+  if(d.month_mod&&d.month_mod[mo]!=null){ v+=d.month_mod[mo]; notes.push(`club cycle: ${d.team} month-${mo} modifier ${d.month_mod[mo]>0?"+":""}${d.month_mod[mo]}% (5y monthly PPG pattern)`); }
+  if(d.tiers){
+    const tier=BIG6.includes(B)?"big6":null;
+    if(tier==="big6"&&d.tiers.big6&&d.season_avg_ppg){ const t=(d.tiers.big6.ppg-d.season_avg_ppg)*2.5; const tv=Math.max(-4,Math.min(4,+t.toFixed(1))); if(Math.abs(tv)>=1){ v+=tv; notes.push(`vs Big-6 pattern: ${tv>0?"+":""}${tv}% (${d.tiers.big6.ppg} PPG vs ${d.season_avg_ppg} avg, n=${d.tiers.big6.n})`); } }
+  }
+  return {v:+v.toFixed(1),notes,card:d.card||null,cascade:d.cascade_players||[],market:d.market_bands||null,totals:d.totals||null,team:A};
+}
 async function ensureAllProfiles(){
   if(ALLPROF)return;
   const acc=[];
@@ -897,7 +910,7 @@ function archOf(st){
   const a=[]; if(!st)return a;
   if(st._ppda!=null){ if(st._ppda<9.5)a.push("HIGH-PRESS"); else if(st._ppda>12.5)a.push("LOW-BLOCK"); }
   const sit=st.situation||{}; const tot=Object.values(sit).reduce((x,y)=>x+(y.goals||0),0)||1;
-  const sp=((sit["From corner"]||{}).goals||0)+((sit["Set piece"]||{}).goals||0)+((sit["Direct freekick"]||{}).goals||0);
+  const sp=((sit["FromCorner"]||{}).goals||0)+((sit["SetPiece"]||{}).goals||0)+((sit["DirectFreekick"]||{}).goals||0);
   if(sp/tot>0.3)a.push("SET-PIECE");
   const spd=st.attackSpeed||{}; const stot=Object.values(spd).reduce((x,y)=>x+(y.goals||0),0)||1;
   if(((spd["Fast"]||{}).goals||0)/stot>0.25)a.push("TRANSITION");
@@ -997,14 +1010,16 @@ function matchupEngine(A,B,venueHome){
   }
   const script=scriptPredict(stA,stB);
   if(koMode!=="league") win=50+(win-50)*0.85; // knockout compression: upsets more likely, models less accurate
-  const base=Math.round(Math.max(15,Math.min(85,win+form.v+arch.v+h2h.v+cong.v)));
+  const dosA=dossierAdj(A,B,venueHome), dosB=dossierAdj(B,A,!venueHome);
+  const dos={v:+(dosA.v-dosB.v).toFixed(1), notes:[...dosA.notes,...dosB.notes.map(n=>"(opp) "+n)], cardA:dosA.card, cardB:dosB.card, cascade:[...(dosA.cascade||[]),...(dosB.cascade||[])], marketA:dosA.market, totalsA:dosA.totals};
+  const base=Math.round(Math.max(15,Math.min(85,win+form.v+arch.v+h2h.v+cong.v+dos.v)));
   const relOf=t=>{const ps=DB.players.filter(p=>p.team===t&&p.xgi_share!=null&&p.xgi_share>0);return ps.length?ps.sort((a,b)=>b.xgi_share-a.xgi_share)[0]:null;};
   const relA=relOf(A), relB=relOf(B);
   const alerts=DB.players.filter(p=>(p.team===A||p.team===B)&&p.prs>=8&&p.status&&p.status!=="fit"&&p.status!=="unavailable");
   const lowSample=rA.n<8||rB.n<8;
   return {gA:+gA.toFixed(2),gB:+gB.toFixed(2),poisson:{w:+(P.w*scale*100).toFixed(1),d:+(pd*100).toFixed(1),l:+(P.l*scale*100).toFixed(1),best:P.best},
     win:+win.toFixed(1),form,arch,h2h,cong,script,base,alerts,lowSample,blended:rA.blended||rB.blended,nA:rA.n,nB:rB.n,
-    totalG:+(gA+gB).toFixed(2),relA,relB};
+    totalG:+(gA+gB).toFixed(2),relA,relB,dos};
 }
 function h2hPanel(team){
   const all=[...new Set((HIST||[]).flatMap(m=>[m.home,m.away]))].filter(t2=>t2!==team).sort();
@@ -1032,7 +1047,11 @@ function h2hPanel(team){
           ${comp("Pattern vs opponent archetype",E.arch,E.arch.vs?("vs "+E.arch.vs):"no archetype signal")}
           ${comp("H2H evidence (xG-diff of meetings, not results)",E.h2h)}
           ${comp("Congestion / rest",{v:E.cong.v,n:null},E.cong.note)}
+          ${E.dos&&E.dos.v!==0?comp("Club dossier patterns",{v:E.dos.v,n:null},""):""}
         </table>
+        ${E.dos&&E.dos.notes.length?`<p class="small muted" style="margin-top:4px">${E.dos.notes.map(esc).join(" · ")}</p>`:""}
+        ${E.dos&&E.dos.marketA?(()=>{const band=E.dos.marketA.find(b2=>{const [lo,hi]=b2.band.replace("+","-1.01").split("-").map(Number);return E.base/100>=lo&&E.base/100<hi;});return band&&band.edge<-3?`<p class="small" style="margin-top:4px"><span class="tag miss">MARKET TRAP</span> at this price band the market historically overprices this pick (${band.edge}pp over 5y, n=${band.n}) — demand extra edge or pass.</p>`:band&&band.edge>5?`<p class="small" style="margin-top:4px"><span class="tag hit">VALUE BAND</span> historically the market underprices this pick at this level (+${band.edge}pp, n=${band.n}).</p>`:"";})():""}
+        ${E.dos&&E.dos.cascade&&E.dos.cascade.length?`<p class="small" style="margin-top:4px"><span class="tag watch">CASCADE</span> ${E.dos.cascade.map(c2=>esc(c2.name)+" — "+esc(c2.why)).join(" · ")}</p>`:""}
         <div class="num" style="font-size:32px;font-weight:800;color:var(--accent);margin:10px 0">${E.base}% <span class="small muted" style="font-weight:400">suggested BASE for ${esc(team)}</span></div>
         <div class="flex">
           <span class="tag watch">${esc(E.script.code)}</span><span class="small muted">${esc(E.script.why)} → ${esc(E.script.lean)}</span>
@@ -1042,6 +1061,11 @@ function h2hPanel(team){
         ${E.lowSample||E.blended?`<p class="small" style="margin-top:6px"><span class="tag miss">LOW SAMPLE</span> <span class="muted">${E.nA}/${E.nB} matches this season — previous-season blend applied. Trust less.</span></p>`:""}
         ${E.alerts.length?`<p class="small" style="margin-top:6px"><span class="tag miss">⚠ AVAILABILITY</span> ${E.alerts.map(p=>esc(p.name)+" ("+esc(p.team)+", PRS "+p.prs+", "+esc(p.status)+")").join(" · ")} — PRS layer applies on top.</p>`:""}
         <div class="flex" style="margin-top:10px"><button class="btn sm" onclick="sendToCalc(${E.base})">Send to Calculator →</button></div>
+        ${E.dos&&(E.dos.cardA||E.dos.cardB)?`<details style="margin-top:8px"><summary class="small" style="cursor:pointer;color:var(--accent)"><b>BETTING CARDS from club dossiers</b></summary>
+          ${[["cardA",A=>A], ["cardB",x=>x]].map(()=>"").join("")}
+          ${E.dos.cardA?`<div class="detail" style="margin-top:6px"><b class="small">${esc(team)}</b>${["back","fade","watch","never"].map(k2=>E.dos.cardA[k2]&&E.dos.cardA[k2].length?`<p class="small" style="margin-top:4px"><b class="${k2==="back"?"pos":k2==="never"||k2==="fade"?"neg":"muted"}" style="text-transform:uppercase">${k2}:</b> ${E.dos.cardA[k2].map(esc).join(" · ")}</p>`:"").join("")}</div>`:""}
+          ${E.dos.cardB?`<div class="detail" style="margin-top:6px"><b class="small">${esc(h2hOpp)}</b>${["back","fade","watch","never"].map(k2=>E.dos.cardB[k2]&&E.dos.cardB[k2].length?`<p class="small" style="margin-top:4px"><b class="${k2==="back"?"pos":k2==="never"||k2==="fade"?"neg":"muted"}" style="text-transform:uppercase">${k2}:</b> ${E.dos.cardB[k2].map(esc).join(" · ")}</p>`:"").join("")}</div>`:""}
+        </details>`:""}
         <p class="small muted" style="margin-top:6px">BASE layer only — apply PRS / AIS / TMS / context on top. The script suggestion feeds your TMS read.</p>
       </div>
       <details style="margin-top:8px"><summary class="small muted" style="cursor:pointer">Raw H2H results (evidence, not gospel — ${ms.length} meetings)</summary>
