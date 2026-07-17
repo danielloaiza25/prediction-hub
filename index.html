@@ -250,27 +250,103 @@ function edgeStats(){
   for(const r of rows){const mkt = r.market_prob ?? (100/r.closing_odds); sum += (r.final_prob-mkt);}
   return {n:rows.length, avg:rows.length?(sum/rows.length):null};
 }
-let SCAN=null;
-async function scanWeek(){
-  const out=document.getElementById("scanout");
-  if(out)out.innerHTML='<p class="muted small">Scanning — loading five seasons of data…</p>';
-  try{
-    await Promise.all([ensureHist(),ensureAllProfiles(),ensureRotation(),ensureCalendar(),ensureDossiers()]);
-    if(!plSeason) plSeason=SEASON_LIVE()||seasonList()[0];
-    const ups=DB.plf.filter(f=>!f.started&&f.kickoff&&new Date(f.kickoff)>Date.now()).sort((a,b)=>new Date(a.kickoff)-new Date(b.kickoff)).slice(0,12);
-    if(!ups.length){SCAN=[];if(out)out.innerHTML='<p class="muted small">No upcoming fixtures scheduled yet — the scan lights up once the season fixtures load.</p>';return;}
-    SCAN=ups.map(f=>{const E=matchupEngine(f.team_h_name,f.team_a_name,true);return E?{f,E,edge:Math.abs(E.base-50)+(E.lowSample?-8:0)}:null;}).filter(Boolean).sort((a,b)=>b.edge-a.edge);
-    if(out)out.innerHTML=renderScan();
-  }catch(e){ if(out)out.innerHTML='<p class="neg small">Scan failed: '+esc(e.message)+'</p>'; }
+let SCAN=null, BOARD=null, BOARDREQ=false, boardSort="ev";
+function boardKey(){
+  const up=DB.plf.filter(f=>!f.started&&f.kickoff&&new Date(f.kickoff)>Date.now()).sort((a,b)=>new Date(a.kickoff)-new Date(b.kickoff));
+  return up.length?("bb2_"+(up[0].season||"s")+"_MW"+up[0].event):null;
 }
-function renderScan(){
-  if(!SCAN||!SCAN.length)return '<p class="muted small">Nothing to scan yet.</p>';
-  return `<table><tr><th>#</th><th>Match</th><th>Lean</th><th>Base</th><th>Script</th><th></th></tr>`+SCAN.map((r,i)=>{
-    const homeLean=r.E.base>=50;
-    return `<tr class="rowbtn" onclick="openScanReport(${r.f.id})"><td class="num muted">${i+1}</td><td><b>${esc(fxLabel(r.f))}</b> <span class="muted small">${r.f.kickoff?new Date(r.f.kickoff).toLocaleDateString([],{weekday:"short"}):""}</span></td>
-    <td><b>${esc(homeLean?r.f.team_h_name:r.f.team_a_name)}</b></td><td class="num" style="color:var(--accent);font-weight:700">${homeLean?r.E.base:100-r.E.base-Math.round(r.E.poisson.d)}%</td>
-    <td class="small muted">${esc(r.E.script.code)}</td><td>${r.E.lowSample?'<span class="tag miss">LOW SAMPLE</span>':""}${r.E.alerts.length?' <span class="tag watch">👁</span>':""} <span class="tag pend">report →</span></td></tr>`}).join("")+`</table>
-    <p class="small muted" style="margin-top:6px">Edge-ranked. This is the BASE layer talking — your PRS/TMS/context reads decide whether any of these become bets.</p>`;
+function kalshiWinner(team,maxP){const pay=Math.round(100/maxP*100);return `Buy YES on “${team} wins?” — LIMIT order at ${maxP}¢ or less · $100 → ~$${pay} if they win`;}
+function kalshiNo(team,maxP){const pay=Math.round(100/maxP*100);return `Buy NO on “${team} wins?” — LIMIT at ${maxP}¢ · pays on opponent win OR draw · $100 → ~$${pay}`;}
+function kalshiTotal(over,maxP){const pay=Math.round(100/maxP*100);return `Buy ${over?"YES":"NO"} on “3+ combined goals?” — LIMIT at ${maxP}¢ · $100 → ~$${pay} if ${over?"Over":"Under"} (skip if Kalshi doesn't list this game's totals)`;}
+async function buildBoard(force){
+  const key=boardKey(); if(!key){BOARD={key:null,plays:[],passed:0};return;}
+  if(!force){ try{const c=JSON.parse(localStorage.getItem(key)||"null"); if(c&&Date.now()-c.ts<6*3600e3){BOARD=c;return;}}catch(e){} }
+  await Promise.all([ensureHist(),ensureAllProfiles(),ensureRotation(),ensureCalendar(),ensureDossiers()]);
+  if(!plSeason) plSeason=SEASON_LIVE()||seasonList()[0];
+  const ups=DB.plf.filter(f=>!f.started&&f.kickoff&&new Date(f.kickoff)>Date.now()).sort((a,b)=>new Date(a.kickoff)-new Date(b.kickoff));
+  const mw=ups.length?ups[0].event:null;
+  const fixtures=ups.filter(f=>f.event===mw);
+  const plays=[]; let passed=0;
+  for(const f of fixtures){
+    const A=f.team_h_name,B=f.team_a_name;
+    const E=matchupEngine(A,B,true);
+    if(!E){passed++;continue;}
+    const alerts=E.alerts||[];
+    const lineupTag=alerts.length?[["LINEUP RISK: "+alerts.map(p=>p.name).join(", "),"danger"]]:[];
+    const day=new Date(f.kickoff).toLocaleDateString([],{weekday:"short"});
+    const mk=(team)=>{const d2=DOSS&&DOSS[team];return d2&&d2.market_bands?d2.market_bands:null;};
+    const bandTag=(team,prob)=>{const mb=mk(team);if(!mb)return null;const hit=mb.find(b2=>{const parts=b2.band.replace("+","-1.01").split("-").map(Number);return prob/100>=parts[0]&&prob/100<parts[1];});
+      if(hit&&hit.edge>=5)return [["VALUE BAND "+(hit.edge>0?"+":"")+hit.edge+"pp","success"],1];
+      if(hit&&hit.edge<=-5)return [["MARKET TRAP "+hit.edge+"pp","danger"],-1];
+      return null;};
+    const homeP=E.base, drawP=Math.round(E.poisson.d), awayP=Math.max(1,100-homeP-drawP);
+    // 1) WINNER
+    const favHome=homeP>=awayP;
+    const wp=favHome?homeP:awayP, wteam=favHome?A:B;
+    if(wp>=55&&!E.lowSample){
+      const bt=bandTag(wteam,wp);
+      if(!(bt&&bt[1]<0)){
+        const tags=[["WINNER","neutral"],...(bt?[bt[0]]:[]),...lineupTag];
+        if(E.dos&&E.dos.notes.length)tags.push([E.dos.notes[0].slice(0,40),"neutral"]);
+        plays.push({match:A+" vs "+B,day,bet:wteam+" to win",our:wp,type:"winner",team:wteam,tags,note:"engine "+E.gA+"–"+E.gB+" · most likely "+E.poisson.best});
+      }
+    }
+    // 2) NO on favorite (SIEGE / trap)
+    const noP=100-wp;
+    const trap=bandTag(wteam,wp);
+    if((E.script.code.startsWith("A SIEGE")||(trap&&trap[1]<0))&&noP>=42){
+      plays.push({match:A+" vs "+B,day,bet:"Fade "+wteam+" (NO)",our:noP,type:"no",team:wteam,
+        tags:[["NO / DRAW+","neutral"],[(E.script.code.startsWith("A")?"SCRIPT A SIEGE":"vs trap band"),"warning"],...(trap&&trap[1]<0?[trap[0]]:[]),...lineupTag],
+        note:"pays on "+(favHome?B:A)+" win OR draw — draws spike vs blocks"});
+    }
+    // 3) TOTALS
+    const oP=E.poisson.o;
+    if(oP>=58) plays.push({match:A+" vs "+B,day,bet:"Over 2.5 lean",our:Math.round(oP),type:"over",tags:[["TOTALS","neutral"],["expected goals "+E.totalG,"neutral"],...lineupTag],note:E.script.lean.includes("Over")?"script agrees: "+E.script.code:""});
+    if(oP<=42) plays.push({match:A+" vs "+B,day,bet:"Under 2.5 lean",our:Math.round(100-oP),type:"under",tags:[["TOTALS","neutral"],["expected goals "+E.totalG,"neutral"],...lineupTag],note:E.script.lean.includes("Under")?"script agrees: "+E.script.code:""});
+    // 4) LIVE conditional (shaky leads)
+    for(const [tm,opp] of [[A,B],[B,A]]){
+      const d3=DOSS&&DOSS[tm];
+      if(d3&&d3.ht_states&&d3.ht_states.lead&&d3.ht_states.lead.n>=30&&d3.ht_states.lead.l>=14){
+        plays.push({match:A+" vs "+B,day,bet:"In-play: lay a "+tm+" HT lead",our:null,type:"live",
+          tags:[["LIVE PLAN","neutral"],[tm+" blow "+d3.ht_states.lead.l+"% of HT leads","danger"]],
+          note:"IF "+tm+" lead at HT: buy NO on “"+tm+" wins?” if it trades 15-25¢ under fair"});
+      }
+    }
+    if(!plays.some(p=>p.match===A+" vs "+B))passed++;
+  }
+  for(const p of plays){
+    if(p.our!=null){ p.maxPrice=Math.max(5,p.our-5); p.ev=Math.round(p.our/100*(100/p.maxPrice*100)-100); }
+    p.kalshi=p.type==="winner"?kalshiWinner(p.team,p.maxPrice):p.type==="no"?kalshiNo(p.team,p.maxPrice):p.type==="over"?kalshiTotal(true,p.maxPrice):p.type==="under"?kalshiTotal(false,p.maxPrice):p.note;
+  }
+  BOARD={key,ts:Date.now(),mw,plays,passed,total:fixtures.length};
+  try{localStorage.setItem(key,JSON.stringify(BOARD));}catch(e){}
+}
+async function refreshBoard(force){
+  const el=document.getElementById("boardout");
+  if(el)el.innerHTML='<p class="muted small">Engine scanning the matchweek…</p>';
+  try{ await buildBoard(force); }catch(e){ if(el){el.innerHTML='<p class="neg small">Board failed: '+esc(e.message)+'</p>';return;} }
+  if(TAB==="dashboard")render();
+}
+function chipHtml(t,k){const c={success:["rgba(46,204,113,.15)","var(--green)"],danger:["rgba(231,76,91,.15)","var(--red)"],warning:["rgba(245,185,66,.15)","var(--accent)"],neutral:["#1a2130","var(--muted)"]}[k]||["#1a2130","var(--muted)"];return `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${c[0]};color:${c[1]};white-space:nowrap">${esc(t)}</span>`;}
+function renderBoard(){
+  if(!BOARD)return '<p class="muted small">Loading…</p>';
+  if(!BOARD.key)return '<p class="muted small">No upcoming matchweek scheduled yet — the board wakes up when fixtures load.</p>';
+  const ps=[...BOARD.plays].sort((a,b)=>boardSort==="win"?(b.our||0)-(a.our||0):((b.ev??-99)-(a.ev??-99)));
+  if(!ps.length)return '<p class="muted small">Matchweek '+BOARD.mw+': no edges found — all '+BOARD.total+' fixtures passed. Not betting is a position.</p>';
+  return `<p class="small muted" style="margin-bottom:8px">MW ${BOARD.mw} · ${ps.length} plays suggested · ${BOARD.passed} fixtures passed · generated ${new Date(BOARD.ts).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}</p>
+  ${ps.map((p,i)=>`<div class="detail" style="margin-bottom:8px">
+    <div class="flex"><span class="num muted" style="font-size:16px;min-width:20px">${i+1}</span>
+    <b>${esc(p.match)}</b><span class="muted small">${esc(p.day||"")}</span>
+    <span style="color:var(--blue);font-weight:700" class="small">${esc(p.bet)}</span>
+    <span class="right" style="display:flex;gap:5px;flex-wrap:wrap">${p.tags.map(t=>chipHtml(t[0],t[1])).join("")}</span></div>
+    ${p.our!=null?`<div class="flex small" style="margin:6px 0 0 28px;gap:16px">
+      <span>our <b class="num">${p.our}%</b></span><span>max price <b class="num">${p.maxPrice}¢</b></span>
+      <span class="pos">edge ≥ <b class="num">+5</b></span><span class="pos">EV <b class="num">+$${p.ev}</b>/$100 at limit</span></div>`
+    :`<div class="small muted" style="margin:6px 0 0 28px">conditional — no pre-match position</div>`}
+    <div class="small" style="margin:6px 0 0 28px;padding:6px 9px;background:#0f1420;border-radius:8px">🏦 <b>Kalshi:</b> ${esc(p.kalshi)}</div>
+    ${p.note?`<p class="small muted" style="margin:4px 0 0 28px">${esc(p.note)}</p>`:""}
+  </div>`).join("")}
+  <p class="small muted" style="margin-top:8px">Engine + dossier numbers only — PRS/lineups NOT yet applied. Run flagged matches through the full pipeline before staking; any LINEUP RISK = wait for XIs (Rule 2). Confirm live prices on Kalshi — always LIMIT orders, never market-buy.</p>`;
 }
 function openScanReport(fid){
   const f=getFx(fid); if(!f)return;
@@ -301,8 +377,13 @@ function vDashboard(){
   </div>`:""}
   ${(()=>{const up=DB.plf.filter(f=>!f.started&&f.kickoff&&(new Date(f.kickoff)-Date.now())<7*864e5&&(new Date(f.kickoff)>Date.now())).slice(0,6);
     return up.length?`<div class="panel"><h2>Upcoming — next 7 days</h2><table>${up.map(f=>`<tr><td class="num small">${new Date(f.kickoff).toLocaleString([],{weekday:"short",hour:"2-digit",minute:"2-digit"})}</td><td><b>${esc(fxLabel(f))}</b></td><td class="small muted">MW${f.event}</td><td>${DB.predictions.some(p=>p.fixture_id===f.id)?'<span class="tag pend">CALLED</span>':`<button class="btn ghost sm" onclick="predictFixture(${f.id})">Predict</button>`}</td></tr>`).join("")}</table></div>`:"";})()}
-  <div class="panel"><div class="flex"><h2>Top Picks of the Week</h2><button class="btn sm right" onclick="scanWeek()">⚡ Scan matchweek</button></div>
-    <div id="scanout">${SCAN?renderScan():'<p class="muted small">Runs the Matchup Engine over every upcoming fixture and ranks the edges. Click any pick for the full report.</p>'}</div>
+  ${(()=>{ if(!BOARD&&!BOARDREQ&&boardKey()){BOARDREQ=true;setTimeout(()=>refreshBoard(false),50);} return ""; })()}
+  <div class="panel" style="border-color:var(--accent)"><div class="flex"><h2>⚡ Matchday Bet Board</h2>
+    <span class="small muted right">sort:</span>
+    <button class="btn ghost sm" style="${boardSort==="ev"?"border-color:var(--accent);color:var(--accent)":""}" onclick="boardSort='ev';render()">best value</button>
+    <button class="btn ghost sm" style="${boardSort==="win"?"border-color:var(--accent);color:var(--accent)":""}" onclick="boardSort='win';render()">most likely</button>
+    <button class="btn sm" onclick="refreshBoard(true)">↻ Rescan</button></div>
+    <div id="boardout">${renderBoard()}</div>
   </div>`;
 }
 function card(k,v,s,h,t){
@@ -896,13 +977,14 @@ function poissonWDL(gA,gB){
   // Dixon-Coles low-score correction (rho<0 boosts 0-0/1-1, trims 1-0/0-1)
   const RHO=-0.11;
   const tau=(x,y)=>x===0&&y===0?1-gA*gB*RHO:x===0&&y===1?1+gA*RHO:x===1&&y===0?1+gB*RHO:x===1&&y===1?1-RHO:1;
-  let w=0,d=0,l=0,tot=0,best={p:0,s:"1-1"};
+  let w=0,d=0,l=0,o=0,tot=0,best={p:0,s:"1-1"};
   for(let a=0;a<=7;a++)for(let b=0;b<=7;b++){
     let p=pois(gA,a)*pois(gB,b)*tau(a,b); if(p<0)p=0; tot+=p;
     if(a>b)w+=p;else if(a===b)d+=p;else l+=p;
+    if(a+b>=3)o+=p;
     if(p>best.p)best={p,s:a+"-"+b};
   }
-  return {w:w/tot,d:d/tot,l:l/tot,best:best.s};
+  return {w:w/tot,d:d/tot,l:l/tot,o:o/tot,best:best.s};
 }
 
 /* ---- archetypes & patterns ---- */
@@ -1017,7 +1099,7 @@ function matchupEngine(A,B,venueHome){
   const relA=relOf(A), relB=relOf(B);
   const alerts=DB.players.filter(p=>(p.team===A||p.team===B)&&p.prs>=8&&p.status&&p.status!=="fit"&&p.status!=="unavailable");
   const lowSample=rA.n<8||rB.n<8;
-  return {gA:+gA.toFixed(2),gB:+gB.toFixed(2),poisson:{w:+(P.w*scale*100).toFixed(1),d:+(pd*100).toFixed(1),l:+(P.l*scale*100).toFixed(1),best:P.best},
+  return {gA:+gA.toFixed(2),gB:+gB.toFixed(2),poisson:{w:+(P.w*scale*100).toFixed(1),d:+(pd*100).toFixed(1),l:+(P.l*scale*100).toFixed(1),o:+(P.o*100).toFixed(1),best:P.best},
     win:+win.toFixed(1),form,arch,h2h,cong,script,base,alerts,lowSample,blended:rA.blended||rB.blended,nA:rA.n,nB:rB.n,
     totalG:+(gA+gB).toFixed(2),relA,relB,dos};
 }
