@@ -280,15 +280,24 @@ async function buildBoard(force){
       if(hit&&hit.edge<=-5)return [["MARKET TRAP "+hit.edge+"pp","danger"],-1];
       return null;};
     const homeP=E.base, drawP=Math.round(E.poisson.d), awayP=Math.max(1,100-homeP-drawP);
+    const stA=stakesOf(A), stB=stakesOf(B);
+    const stTags=[];
+    if(stA.tag==="F")stTags.push([A+": "+stA.label,"danger"]);
+    if(stB.tag==="F")stTags.push([B+": "+stB.label,"danger"]);
+    if(stA.tag==="S")stTags.push([A+": beach mode","warning"]);
+    if(stB.tag==="S")stTags.push([B+": beach mode","warning"]);
     // 1) WINNER
     const favHome=homeP>=awayP;
     const wp=favHome?homeP:awayP, wteam=favHome?A:B;
     if(wp>=55&&!E.lowSample){
       const bt=bandTag(wteam,wp);
       if(!(bt&&bt[1]<0)){
-        const tags=[["WINNER","neutral"],...(bt?[bt[0]]:[]),...lineupTag];
+        const tags=[["WINNER","neutral"],...(bt?[bt[0]]:[]),...lineupTag,...stTags];
         if(E.dos&&E.dos.notes.length)tags.push([E.dos.notes[0].slice(0,40),"neutral"]);
-        plays.push({match:A+" vs "+B,day,bet:wteam+" to win",our:wp,type:"winner",team:wteam,tags,note:"engine "+E.gA+"–"+E.gB+" · most likely "+E.poisson.best});
+        const favStakes=favHome?stA:stB, oppStakes=favHome?stB:stA;
+        const motPrem=favStakes.tag==="F"&&oppStakes.tag==="S";
+        if(motPrem)tags.push(["MOTIVATION PREMIUM — extra margin","danger"]);
+        plays.push({match:A+" vs "+B,day,bet:wteam+" to win",our:wp,type:"winner",team:wteam,tags,motPrem,note:"engine "+E.gA+"–"+E.gB+" · most likely "+E.poisson.best});
       }
     }
     // 2) NO on favorite (SIEGE / trap)
@@ -315,7 +324,7 @@ async function buildBoard(force){
     if(!plays.some(p=>p.match===A+" vs "+B))passed++;
   }
   for(const p of plays){
-    if(p.our!=null){ p.maxPrice=Math.max(5,p.our-5); p.ev=Math.round(p.our/100*(100/p.maxPrice*100)-100); }
+    if(p.our!=null){ p.maxPrice=Math.max(5,p.our-(p.motPrem?8:5)); p.ev=Math.round(p.our/100*(100/p.maxPrice*100)-100); }
     p.kalshi=p.type==="winner"?kalshiWinner(p.team,p.maxPrice):p.type==="no"?kalshiNo(p.team,p.maxPrice):p.type==="over"?kalshiTotal(true,p.maxPrice):p.type==="under"?kalshiTotal(false,p.maxPrice):p.note;
   }
   BOARD={key,ts:Date.now(),mw,plays,passed,total:fixtures.length};
@@ -378,6 +387,27 @@ function vDashboard(){
   ${(()=>{const up=DB.plf.filter(f=>!f.started&&f.kickoff&&(new Date(f.kickoff)-Date.now())<7*864e5&&(new Date(f.kickoff)>Date.now())).slice(0,6);
     return up.length?`<div class="panel"><h2>Upcoming — next 7 days</h2><table>${up.map(f=>`<tr><td class="num small">${new Date(f.kickoff).toLocaleString([],{weekday:"short",hour:"2-digit",minute:"2-digit"})}</td><td><b>${esc(fxLabel(f))}</b></td><td class="small muted">MW${f.event}</td><td>${DB.predictions.some(p=>p.fixture_id===f.id)?'<span class="tag pend">CALLED</span>':`<button class="btn ghost sm" onclick="predictFixture(${f.id})">Predict</button>`}</td></tr>`).join("")}</table></div>`:"";})()}
   ${(()=>{ if(!BOARD&&!BOARDREQ&&boardKey()){BOARDREQ=true;setTimeout(()=>refreshBoard(false),50);} return ""; })()}
+  ${(()=>{
+    const settled=DB.predictions.filter(p=>(p.outcome==="HIT"||p.outcome==="MISS")&&p.final_prob!=null&&!p.is_avoid);
+    if(settled.length<5)return "";
+    const brier=settled.reduce((a,p)=>a+Math.pow(p.final_prob/100-(p.outcome==="HIT"?1:0),2),0)/settled.length;
+    const bandsC=[[50,60],[60,70],[70,101]].map(([lo,hi])=>{
+      const set=settled.filter(p=>p.final_prob>=lo&&p.final_prob<hi);
+      return {lo,hi,n:set.length,pred:set.length?set.reduce((a,p)=>a+p.final_prob,0)/set.length:0,act:set.length?100*set.filter(p=>p.outcome==="HIT").length/set.length:0};
+    }).filter(b2=>b2.n>=3);
+    const over=settled.length>=10?(settled.reduce((a,p)=>a+p.final_prob,0)/settled.length-100*settled.filter(p=>p.outcome==="HIT").length/settled.length):0;
+    const misses=DB.predictions.filter(p=>p.outcome==="MISS").length;
+    const autop=(DB.autopsies||[]).length;
+    return `<div class="panel"><h2>🧠 System Learning — recalibrates with every settled call</h2>
+    <div class="grid cards" style="margin-bottom:10px">
+      ${card("Brier score",brier.toFixed(3),brier<0.20?"excellent (lower = better; 0.25 = coin-flip guessing)":brier<0.25?"decent — beating naive guessing":"⚠ worse than coin-flip — recalibrate")}
+      ${card("Calibration drift",(over>0?"+":"")+over.toFixed(1)+"pp",Math.abs(over)<5?"honest confidence":over>0?"⚠ OVERCONFIDENT — shave "+Math.round(over)+"pp off finals":"underconfident — trust the pipeline more")}
+      ${card("Misses examined",autop+"/"+misses,autop>=misses?"every loss converted to rules":"⚠ autopsies owed")}
+    </div>
+    ${bandsC.length?`<table><tr><th>Confidence band</th><th>n</th><th>Avg predicted</th><th>Actually hit</th><th>Verdict</th></tr>
+    ${bandsC.map(b2=>`<tr><td class="num">${b2.lo}-${b2.hi===101?"100":b2.hi}%</td><td class="num">${b2.n}</td><td class="num">${b2.pred.toFixed(0)}%</td><td class="num">${b2.act.toFixed(0)}%</td><td class="small ${Math.abs(b2.pred-b2.act)<8?"pos":"neg"}">${Math.abs(b2.pred-b2.act)<8?"✓ calibrated":b2.pred>b2.act?"overconfident here":"underpriced yourself"}</td></tr>`).join("")}</table>`:""}
+    <p class="small muted" style="margin-top:8px">How the system self-improves: this panel recalibrates on every settle · draw model re-learns from each week's results · ratings are recency-weighted (bad reads age out) · rotation/injury data refreshes 4×/day · autopsies convert misses into permanent rules. What it will NOT do: auto-tune weights on tiny samples — that's curve-fitting, not learning. At ~50 settled calls the calibration verdicts here become strong enough to act on.</p>
+    </div>`;})()}
   <div class="panel" style="border-color:var(--accent)"><div class="flex"><h2>⚡ Matchday Bet Board</h2>
     <span class="small muted right">sort:</span>
     <button class="btn ghost sm" style="${boardSort==="ev"?"border-color:var(--accent);color:var(--accent)":""}" onclick="boardSort='ev';render()">best value</button>
@@ -1050,6 +1080,28 @@ function congestionAt(team,dateStr){
   const sandwich=next?(next-d)<=4*864e5:false;
   return {in14,rest,sandwich};
 }
+function stakesOf(team){
+  const live=SEASON_LIVE(); if(!live)return {tag:"OFF",label:"season not started"};
+  const ms=matchesFor(live);
+  const tb=tableFrom(ms);
+  const me=tb.find(r=>r.team===team);
+  if(!me)return {tag:"M",label:"no data"};
+  if(me.p<27)return {tag:"M",label:"early/mid season — stakes neutral"};
+  const pos=tb.indexOf(me)+1, left=38-me.p;
+  const top=tb[0].pts-me.pts, top4=(tb[3]?tb[3].pts:0)-me.pts, rel=me.pts-(tb[17]?tb[17].pts:0);
+  if(top<=4&&left>0)return {tag:"F",label:`TITLE RACE — ${top===0?"top":top+" pts off top"}, ${left} left`};
+  if(Math.abs(top4)<=4)return {tag:"F",label:`TOP-4 RACE — ${top4>0?top4+" pts off 4th":"holding 4th zone"}`};
+  if(rel<=6)return {tag:"F",label:`RELEGATION FIGHT — ${rel} pts above the line`};
+  if(top>8&&rel>8&&Math.abs(top4)>8)return {tag:"S",label:`SAFE (${pos}th) — nothing left to play for`};
+  return {tag:"M",label:`mid-stakes (${pos}th)`};
+}
+function priorityConflict(team,kick){
+  if(!CAL||!kick)return null;
+  const k=new Date(kick);
+  const near=CAL.find(c=>(c.home===team||c.away===team)&&c.kickoff&&Math.abs(new Date(c.kickoff)-k)<=4*864e5&&["UCL","UEL","UECL"].includes(c.comp)&&["16","125","150","160"].includes(String(c.round)));
+  return near?`${near.comp} knockout within 4 days`:null;
+}
+function stakesChip(st){return st.tag==="F"?chipHtml(st.label,"danger"):st.tag==="S"?chipHtml(st.label,"warning"):"";}
 function scriptPredict(stA,stB,prA,prB){
   const aA=archOf(stA), aB=archOf(stB);
   const topForm=st=>{const f=Object.values((st&&st.formation)||{}).sort((x,y)=>(+y.time||0)-(+x.time||0))[0];return f?f.stat:null;};
@@ -1134,6 +1186,13 @@ function h2hPanel(team){
         ${E.dos&&E.dos.notes.length?`<p class="small muted" style="margin-top:4px">${E.dos.notes.map(esc).join(" · ")}</p>`:""}
         ${E.dos&&E.dos.marketA?(()=>{const band=E.dos.marketA.find(b2=>{const [lo,hi]=b2.band.replace("+","-1.01").split("-").map(Number);return E.base/100>=lo&&E.base/100<hi;});return band&&band.edge<-3?`<p class="small" style="margin-top:4px"><span class="tag miss">MARKET TRAP</span> at this price band the market historically overprices this pick (${band.edge}pp over 5y, n=${band.n}) — demand extra edge or pass.</p>`:band&&band.edge>5?`<p class="small" style="margin-top:4px"><span class="tag hit">VALUE BAND</span> historically the market underprices this pick at this level (+${band.edge}pp, n=${band.n}).</p>`:"";})():""}
         ${E.dos&&E.dos.cascade&&E.dos.cascade.length?`<p class="small" style="margin-top:4px"><span class="tag watch">CASCADE</span> ${E.dos.cascade.map(c2=>esc(c2.name)+" — "+esc(c2.why)).join(" · ")}</p>`:""}
+        ${(()=>{const sA=stakesOf(team),sB=stakesOf(h2hOpp);
+          if(sA.tag==="OFF")return "";
+          let out=`<p class="small" style="margin-top:4px"><b class="muted">SEASON STORY:</b> ${esc(team)}: ${esc(sA.label)} · ${esc(h2hOpp)}: ${esc(sB.label)}</p>`;
+          const pcA=priorityConflict(team,null),__u=0;
+          if(sA.tag==="F"&&sB.tag==="S"&&E.base>=50)out+=`<p class="small" style="margin-top:4px"><span class="tag miss">MOTIVATION PREMIUM</span> backing the desperate side vs a beach team: 5-season backtest says the market overprices this spot by ~5pp (fighting sides won 37.6% vs 42.3% implied, n=210). Demand extra edge or take the NO.</p>`;
+          if(sB.tag==="F"&&sA.tag==="S"&&E.base<50)out+=`<p class="small" style="margin-top:4px"><span class="tag miss">MOTIVATION PREMIUM</span> the opponent is the desperate side — their price is likely inflated; the fade gains value.</p>`;
+          return out;})()}
         <div class="num" style="font-size:32px;font-weight:800;color:var(--accent);margin:10px 0">${E.base}% <span class="small muted" style="font-weight:400">suggested BASE for ${esc(team)}</span></div>
         <div class="flex">
           <span class="tag watch">${esc(E.script.code)}</span><span class="small muted">${esc(E.script.why)} → ${esc(E.script.lean)}</span>
