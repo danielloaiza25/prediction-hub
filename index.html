@@ -104,7 +104,7 @@ let TAB = location.hash.replace("#","") || "dashboard";
 
 async function loadAll(){
   document.getElementById("syncstate").textContent="syncing…";
-  const [p,pl,co,te,ve,ne,se,plf,plt,au] = await Promise.all([
+  const [p,pl,co,te,ve,ne,se,plf,plt,au,lg] = await Promise.all([
     api("predictions?select=*&order=match_date.desc.nullslast,entry_no.desc"),
     api("players?select=*&order=team.asc,prs.desc"),
     api("coaches?select=*&order=team.asc"),
@@ -114,9 +114,10 @@ async function loadAll(){
     api("settings?select=*"),
     api("pl_fixtures?select=*&order=kickoff.asc.nullslast"),
     api("pl_teams?select=*&order=name.asc"),
-    api("autopsies?select=*&order=id.asc")
+    api("autopsies?select=*&order=id.asc"),
+    api("bets_ledger?select=*&order=placed_at.desc")
   ]);
-  DB={predictions:p, players:pl, coaches:co, teams:te, venues:ve, news:ne, settings:Object.fromEntries(se.map(s=>[s.key,s.value])), plf:plf, plt:plt, autopsies:au};
+  DB={predictions:p, players:pl, coaches:co, teams:te, venues:ve, news:ne, settings:Object.fromEntries(se.map(s=>[s.key,s.value])), plf:plf, plt:plt, autopsies:au, ledger:lg};
   DB.plstate = DB.settings.pl_state || null;
   document.getElementById("syncstate").textContent="✓ synced "+new Date().toLocaleTimeString();
   render();
@@ -137,8 +138,8 @@ const outcomeTag = o => !o?'<span class="tag pend">PENDING</span>':o==="HIT"?'<s
 /* ---------- NAV ---------- */
 const GROUPS = [
   {id:"dashboard", label:"Dashboard", tabs:[["dashboard","Dashboard"]]},
-  {id:"fixtures",  label:"Fixtures",  tabs:[["fixtures","Fixtures / Lineup Watch"]]},
-  {id:"preds",     label:"Predictions", tabs:[["predictions","Log"],["autopsies","Autopsies"]]},
+  {id:"fixtures",  label:"Fixtures",  tabs:[["fixtures","Fixtures / Lineup Watch"],["inplay","In-Play Card"]]},
+  {id:"preds",     label:"Predictions", tabs:[["predictions","Log"],["ledger","Bet Ledger"],["autopsies","Autopsies"]]},
   {id:"league",    label:"League",    tabs:[["pltable","Table & Team Profiles"],["venues","Venues (AIS)"]]},
   {id:"squads",    label:"Scouting Report", tabs:[["scout","Clubs"],["players","Players (PRS)"],["coaches","Coaches (TMS)"]]},
   {id:"tools",     label:"Tools",     tabs:[["calculator","Calculator"],["data","Import / Export"]]},
@@ -164,6 +165,8 @@ function render(){
   else if(TAB==="fixtures") m.innerHTML=vFixtures();
   else if(TAB==="pltable"){renderPLTable();return;}
   else if(TAB==="autopsies"){renderAutopsies();return;}
+  else if(TAB==="ledger") m.innerHTML=vLedger();
+  else if(TAB==="inplay"){renderInplay();return;}
   else if(TAB==="scout") m.innerHTML=vScout();
   else if(TAB==="players") m.innerHTML=vPlayers();
   else if(TAB==="coaches") m.innerHTML=vCoaches();
@@ -351,6 +354,27 @@ async function refreshBoard(force){
   if(TAB==="dashboard")render();
 }
 function chipHtml(t,k){const c={success:["rgba(46,204,113,.15)","var(--green)"],danger:["rgba(231,76,91,.15)","var(--red)"],warning:["rgba(245,185,66,.15)","var(--accent)"],neutral:["#1a2130","var(--muted)"]}[k]||["#1a2130","var(--muted)"];return `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${c[0]};color:${c[1]};white-space:nowrap">${esc(t)}</span>`;}
+async function fetchLivePrices(){
+  if(!BOARD||!BOARD.plays||!BOARD.plays.length){toast("Nothing on the board yet",false);return;}
+  toast("Fetching Kalshi prices…");
+  const seen={};
+  for(const p of BOARD.plays){
+    if(p.our==null)continue;
+    const [a,b]=p.match.split(" vs ");
+    const key=p.match;
+    try{
+      if(!seen[key]){ const r=await fetch(SB_URL+"/functions/v1/kalshi-proxy?a="+encodeURIComponent(a)+"&b="+encodeURIComponent(b)); seen[key]=await r.json(); }
+      const d=seen[key];
+      if(d&&d.ok&&d.markets&&d.markets.length){
+        const mk=d.markets.find(m=>String(m.title||"").toLowerCase().includes((p.team||"").toLowerCase()))||d.markets[0];
+        p.livePrice=p.type==="no"?(mk.no_ask??null):(mk.yes_ask??mk.last??null);
+        p.liveTicker=mk.ticker;
+      } else p.livePrice=null;
+    }catch(e){p.livePrice=null;}
+  }
+  try{localStorage.setItem(BOARD.key,JSON.stringify(BOARD));}catch(e){}
+  render(); toast("Live prices attached where markets exist");
+}
 function renderBoard(){
   if(!BOARD)return '<p class="muted small">Loading…</p>';
   if(!BOARD.key)return '<p class="muted small">No upcoming matchweek scheduled yet — the board wakes up when fixtures load.</p>';
@@ -367,7 +391,9 @@ function renderBoard(){
       <span class="pos">edge ≥ <b class="num">+5</b></span><span class="pos">EV <b class="num">+$${p.ev}</b>/$100</span>
       ${p.stake?`<span style="color:var(--accent)">stake <b class="num">$${p.stake}</b> <span class="muted small">(${p.stakePct}% bank, ¼-Kelly)${p.stakeNote?" — "+p.stakeNote:""}</span></span>`:""}</div>`
     :`<div class="small muted" style="margin:6px 0 0 28px">conditional — no pre-match position</div>`}
-    <div class="small" style="margin:6px 0 0 28px;padding:6px 9px;background:#0f1420;border-radius:8px">🏦 <b>Kalshi:</b> ${esc(p.kalshi)}</div>
+    ${p.livePrice!=null?`<div class="small" style="margin:6px 0 0 28px"><span class="tag ${p.livePrice<=p.maxPrice?"hit":"miss"}">LIVE ${p.livePrice}¢ ${p.livePrice<=p.maxPrice?"— under your max, edge is REAL: act":"— above your max ("+p.maxPrice+"¢): PASS"}</span></div>`:""}
+    <div class="small" style="margin:6px 0 0 28px;padding:6px 9px;background:#0f1420;border-radius:8px">🏦 <b>Kalshi:</b> ${esc(p.kalshi)}
+    <button class="btn ghost sm" style="float:right" onclick="logBetFromBoard(${BOARD.plays.indexOf(p)})">💾 Log bet</button></div>
     ${p.note?`<p class="small muted" style="margin:4px 0 0 28px">${esc(p.note)}</p>`:""}
   </div>`).join("")}
   <p class="small muted" style="margin-top:8px">Engine + dossier numbers only — PRS/lineups NOT yet applied. Run flagged matches through the full pipeline before staking; any LINEUP RISK = wait for XIs (Rule 2). Confirm live prices on Kalshi — always LIMIT orders, never market-buy.</p>`;
@@ -427,7 +453,8 @@ function vDashboard(){
     <span class="small muted right">sort:</span>
     <button class="btn ghost sm" style="${boardSort==="ev"?"border-color:var(--accent);color:var(--accent)":""}" onclick="boardSort='ev';render()">best value</button>
     <button class="btn ghost sm" style="${boardSort==="win"?"border-color:var(--accent);color:var(--accent)":""}" onclick="boardSort='win';render()">most likely</button>
-    <button class="btn sm" onclick="refreshBoard(true)">↻ Rescan</button></div>
+    <button class="btn sm" onclick="refreshBoard(true)">↻ Rescan</button>
+    <button class="btn ghost sm" onclick="fetchLivePrices()">🔴 Kalshi live</button></div>
     <div class="flex small" style="margin:6px 0 4px"><span class="muted">Bankroll $</span>
       <input type="number" style="width:90px;padding:4px 8px" value="${(DB.settings.bankroll&&DB.settings.bankroll.amount)||""}" placeholder="1000" onchange="saveBankroll(+this.value)">
       <span class="muted">— stakes = ¼-Kelly from edge, floor 1%, cap 5%, AVOID = $0</span></div>
@@ -542,7 +569,8 @@ async function addPred(){
     venue:g("np_venue").value||null, stage:"predicted", pick:g("np_pick").value||null, base_prob:base, prs_adj:prs, ais_adj:ais, tms_adj:tms, context_adj:ctx,
     final_prob:base!=null?Math.round(base+prs+ais+tms+ctx):null, stars:+g("np_stars").value, game_script:g("np_script").value||null,
     is_avoid:g("np_avoid").checked, lineup_watch:g("np_watch").checked, lineup_watch_note:g("np_watchnote").value||null,
-    layer_notes:g("np_notes").value?{note:g("np_notes").value}:{}, fixture_id:+g("np_fx").value||null};
+    layer_notes:g("np_notes").value?{note:g("np_notes").value}:{}, fixture_id:+g("np_fx").value||null,
+    engine:(window.LAST_E&&Date.now()-window.LAST_E.ts<3600e3)?window.LAST_E:null};
   if(!body.match) return toast("Match required",false);
   try{await api("predictions",{method:"POST",body}); showAddPred=false; PREFILL=null; toast("Prediction logged"); loadAll();}catch(e){toast(e.message,false)}
 }
@@ -553,6 +581,101 @@ async function settle(id){
   try{await api("predictions?id=eq."+id,{method:"PATCH",body}); toast("Settled"); loadAll();}catch(e){toast(e.message,false)}
 }
 async function delPred(id){ if(!confirm("Delete this entry?"))return; try{await api("predictions?id=eq."+id,{method:"DELETE"}); expandId=null; toast("Deleted"); loadAll();}catch(e){toast(e.message,false)} }
+
+/* ---------- BET LEDGER ---------- */
+async function logBetFromBoard(i){
+  const p=(BOARD&&BOARD.plays||[])[i]; if(!p||p.our==null)return;
+  const price=prompt(`Price actually paid (cents) for: ${p.bet} — ${p.match}\nBoard max was ${p.maxPrice}¢`, p.livePrice||p.maxPrice);
+  if(!price)return;
+  const stake=prompt("Stake ($):", p.stake||25); if(!stake)return;
+  try{
+    await api("bets_ledger",{method:"POST",body:{match:p.match,market:p.type,side:p.bet,our_prob:p.our,price_cents:+price,stake:+stake}});
+    toast("Bet logged to ledger"); loadAll();
+  }catch(e){toast(e.message,false)}
+}
+async function settleBet(id,won){
+  const b=DB.ledger.find(x=>x.id===id); if(!b)return;
+  const closing=prompt("Closing price (cents) at kickoff — for CLV (blank to skip):", "");
+  const payout=won? +(b.stake*(100/b.price_cents)).toFixed(2) : 0;
+  try{
+    await api("bets_ledger?id=eq."+id,{method:"PATCH",body:{result:won?"win":"lose",payout,closing_cents:closing?+closing:null}});
+    toast(won?"Marked WIN +$"+(payout-b.stake).toFixed(0):"Marked LOSS"); loadAll();
+  }catch(e){toast(e.message,false)}
+}
+async function delBet(id){ if(!confirm("Delete ledger entry?"))return; try{await api("bets_ledger?id=eq."+id,{method:"DELETE"});loadAll();}catch(e){toast(e.message,false)} }
+function vLedger(){
+  const L=DB.ledger||[];
+  const settled=L.filter(b=>b.result==="win"||b.result==="lose");
+  const staked=settled.reduce((a,b)=>a+ +b.stake,0);
+  const ret=settled.reduce((a,b)=>a+ +(b.payout||0),0);
+  const pnl=ret-staked;
+  const clvs=settled.filter(b=>b.closing_cents!=null).map(b=>b.closing_cents-b.price_cents);
+  const avgClv=clvs.length?(clvs.reduce((a,b)=>a+b,0)/clvs.length):null;
+  const open=L.filter(b=>!b.result);
+  return `
+  <div class="grid cards">
+    ${card("Bets settled",settled.length,open.length+" open")}
+    ${card("P&L","$"+pnl.toFixed(0),staked?((pnl>=0?"+":"")+(100*pnl/staked).toFixed(1)+"% ROI on $"+staked.toFixed(0)+" staked"):"—")}
+    ${card("Avg CLV",avgClv==null?"—":((avgClv>0?"+":"")+avgClv.toFixed(1)+"¢"),clvs.length?clvs.length+" priced closes · positive = you beat the market":"log closing prices at kickoff")}
+    ${card("Win rate",settled.length?Math.round(100*settled.filter(b=>b.result==="win").length/settled.length)+"%":"—","meaningful only vs prices paid")}
+  </div>
+  <div class="panel"><h2>Ledger — every dollar, honestly</h2>
+  <p class="small muted" style="margin-bottom:8px">Entries come from the Bet Board's "Log bet" button (or manually via import). CLV = closing price minus your price: consistently positive CLV proves edge in ~30 bets, long before win/loss does.</p>
+  ${L.length?`<table><tr><th>Placed</th><th>Match / bet</th><th>Our%</th><th>Paid</th><th>Stake</th><th>Close</th><th>CLV</th><th>Result</th><th></th></tr>
+  ${L.map(b=>`<tr>
+    <td class="num small">${(b.placed_at||"").slice(5,10)}</td>
+    <td><b class="small">${esc(b.match||"")}</b><br><span class="muted small">${esc(b.side||"")}</span></td>
+    <td class="num">${b.our_prob||"—"}%</td><td class="num">${b.price_cents}¢</td><td class="num">$${b.stake}</td>
+    <td class="num">${b.closing_cents!=null?b.closing_cents+"¢":"—"}</td>
+    <td class="num ${b.closing_cents!=null?(b.closing_cents>b.price_cents?"pos":"neg"):"muted"}">${b.closing_cents!=null?((b.closing_cents-b.price_cents>0?"+":"")+(b.closing_cents-b.price_cents)+"¢"):"—"}</td>
+    <td>${b.result==="win"?`<span class="tag hit">WIN +$${(b.payout-b.stake).toFixed(0)}</span>`:b.result==="lose"?`<span class="tag miss">−$${b.stake}</span>`:`<button class="btn ghost sm" onclick="settleBet(${b.id},true)">W</button> <button class="btn ghost sm" onclick="settleBet(${b.id},false)">L</button>`}</td>
+    <td><button class="btn ghost sm" onclick="delBet(${b.id})">✕</button></td></tr>`).join("")}</table>`
+  :'<p class="muted">Empty — the season will fix that. Log every bet, including the ugly ones.</p>'}
+  </div>`;
+}
+
+/* ---------- IN-PLAY CARD ---------- */
+let inplayA=null, inplayB=null;
+async function renderInplay(){
+  const m=document.getElementById("main");
+  m.innerHTML='<div class="panel"><p class="muted">Loading…</p></div>';
+  try{ await Promise.all([ensureHist(),ensureDossiers()]); }catch(e){}
+  m.innerHTML=vInplay(); window.scrollTo(0,0);
+}
+function inplaySide(t){
+  const d=DOSS&&DOSS[t]; if(!d)return `<div class="panel"><p class="muted small">No dossier for ${esc(t)}.</p></div>`;
+  const ht=d.ht_states||{}, fg=d.first_goal||{};
+  const tim=d.timing_shares||{};
+  const lay=ht.lead&&ht.lead.l>=14, never=ht.lead&&ht.lead.l<=4&&ht.lead.n>=30;
+  const chaser=fg.conceded&&fg.conceded.ppg>=1.2, quitter=fg.conceded&&fg.conceded.ppg<=0.75;
+  return `<div class="panel" style="flex:1;min-width:280px"><h2>${esc(t)}</h2>
+    <p class="small"><b class="muted">FIRST GOAL:</b> score first → <b class="num pos">${fg.scored?fg.scored.ppg:"?"} PPG</b> · concede first → <b class="num ${quitter?"neg":""}">${fg.conceded?fg.conceded.ppg:"?"} PPG</b> ${quitter?'<span class="tag miss">QUITTERS</span>':chaser?'<span class="tag hit">CHASERS</span>':""}</p>
+    <p class="small" style="margin-top:6px"><b class="muted">HT STATES:</b> lead → W${ht.lead?ht.lead.w:"?"}% L${ht.lead?ht.lead.l:"?"}% ${never?'<span class="tag hit">NEVER LAY</span>':lay?'<span class="tag miss">LAY-ABLE ('+ht.lead.l+'%)</span>':""} · level → W${ht.level?ht.level.w:"?"}% · behind → W${ht.behind?ht.behind.w:"?"}%</p>
+    <p class="small" style="margin-top:6px"><b class="muted">GOAL WINDOWS:</b> scores most ${(()=>{const sc=tim.scored||{};const k=Object.keys(sc).sort((a,b)=>sc[b]-sc[a])[0];return k?`<b class="pos">${k}'</b> (${sc[k]}%)`:"?"})()} · leaks most ${(()=>{const c=tim.conceded||{};const k=Object.keys(c).sort((a,b)=>c[b]-c[a])[0];return k?`<b class="neg">${k}'</b> (${c[k]}%)`:"?"})()}</p>
+    ${d.card&&d.card.never&&d.card.never.length?`<p class="small" style="margin-top:6px"><b class="neg">NEVER:</b> ${d.card.never.map(esc).join(" · ")}</p>`:""}
+  </div>`;
+}
+function vInplay(){
+  const teams=Object.keys(DOSS||{}).sort();
+  const opts=t=>`<option value="">— team —</option>`+teams.map(x=>`<option ${x===t?"selected":""}>${esc(x)}</option>`).join("");
+  let plan="";
+  if(inplayA&&inplayB&&DOSS[inplayA]&&DOSS[inplayB]){
+    const dA=DOSS[inplayA],dB=DOSS[inplayB];
+    const lines=[];
+    if(dA.ht_states&&dA.ht_states.lead&&dA.ht_states.lead.l<=4)lines.push(`If ${inplayA} lead at HT and their YES trades under ~90¢ → buy (they close ${100-dA.ht_states.lead.l}% of leads).`);
+    if(dB.ht_states&&dB.ht_states.lead&&dB.ht_states.lead.l>=14)lines.push(`If ${inplayB} lead at HT → buy NO on them if 15¢+ under fair (they blow ${dB.ht_states.lead.l}%).`);
+    if(dA.first_goal&&dA.first_goal.conceded&&dA.first_goal.conceded.ppg<=0.75)lines.push(`If ${inplayA} concede first → their contract is dead money (${dA.first_goal.conceded.ppg} PPG chasing). Exit or fade.`);
+    if(dB.first_goal&&dB.first_goal.conceded&&dB.first_goal.conceded.ppg<=0.75)lines.push(`If ${inplayB} concede first → same: ${dB.first_goal.conceded.ppg} PPG. The first goal settles this market.`);
+    const aw=(dA.timing_shares&&dA.timing_shares.scored)||{};
+    const hot=Object.keys(aw).sort((x,y)=>aw[y]-aw[x])[0];
+    if(hot)lines.push(`${inplayA}'s hot window is ${hot}' — if the game is level entering it, their price is often stale.`);
+    plan=lines.length?`<div class="panel" style="border-color:var(--accent)"><h2>The plan — written before kickoff, followed after</h2>${lines.map(l=>`<p class="small" style="margin:6px 0">▸ ${esc(l)}</p>`).join("")}<p class="small muted" style="margin-top:8px">Rule: decide entries/exits now, execute mechanically in-play. Live emotion is the house's edge.</p></div>`:"";
+  }
+  return `<div class="flex" style="margin-bottom:10px"><h2 style="color:var(--accent);font-size:14px;text-transform:uppercase;letter-spacing:1px">In-Play Card</h2>
+    <select onchange="inplayA=this.value;renderInplay()">${opts(inplayA)}</select><span class="muted">vs</span>
+    <select onchange="inplayB=this.value;renderInplay()">${opts(inplayB)}</select></div>
+  ${inplayA||inplayB?`<div class="flex" style="align-items:stretch;gap:14px;flex-wrap:wrap">${inplayA?inplaySide(inplayA):""}${inplayB?inplaySide(inplayB):""}</div>${plan}`:'<p class="muted small">Pick the two teams of a live (or upcoming) match — get both dossiers side by side plus a pre-written trading plan for Kalshi in-play.</p>'}`;
+}
 
 /* ---------- AUTOPSIES ---------- */
 let autopsyExpand=null, autopsyEditId=null;
@@ -633,7 +756,8 @@ function autopsyForm(p){
   const ex=autopsyFor(p.id);
   const ms=ex&&ex.match_stats&&Object.keys(ex.match_stats).length?ex.match_stats:(matchStatsFor(p)||{});
   const ln=p.layer_notes||{};
-  const predDefault=ex?ex.predicted:`${esc(p.pick||"")} ${p.final_prob!=null?p.final_prob+"%":""}, ${p.stars||"?"}★.${p.base_prob!=null?` Pipeline: base ${p.base_prob} → PRS ${p.prs_adj>0?"+":""}${p.prs_adj} → AIS ${p.ais_adj>0?"+":""}${p.ais_adj} → TMS ${p.tms_adj>0?"+":""}${p.tms_adj} → ctx ${p.context_adj>0?"+":""}${p.context_adj}.`:""} ${Object.entries(ln).filter(([k,v])=>v).map(([k,v])=>k.toUpperCase()+": "+v).join(" · ")}`;
+  const eng=p.engine?` ENGINE SNAPSHOT: base ${p.engine.base}% (xG ${p.engine.xg}, W/D/L ${p.engine.wdl?p.engine.wdl.w+"/"+p.engine.wdl.d+"/"+p.engine.wdl.l:"?"}), form ${p.engine.form?p.engine.form.v:"?"}, archetype ${p.engine.arch?p.engine.arch.v:"?"}, script ${p.engine.script||"?"}.`:"";
+  const predDefault=(ex?ex.predicted:`${esc(p.pick||"")} ${p.final_prob!=null?p.final_prob+"%":""}, ${p.stars||"?"}★.${p.base_prob!=null?` Pipeline: base ${p.base_prob} → PRS ${p.prs_adj>0?"+":""}${p.prs_adj} → AIS ${p.ais_adj>0?"+":""}${p.ais_adj} → TMS ${p.tms_adj>0?"+":""}${p.tms_adj} → ctx ${p.context_adj>0?"+":""}${p.context_adj}.`:""} ${Object.entries(ln).filter(([k,v])=>v).map(([k,v])=>k.toUpperCase()+": "+v).join(" · ")}`)+eng;
   const dv=ex?(ex.divergence||{}):{};
   return `<div class="panel" style="border-color:var(--accent)"><h2>${ex?"Edit":"New"} Autopsy — ${esc(p.match)} (${esc(p.result||"result?")})</h2>
   <div class="formrow"><label style="flex:1">Headline (the one-line verdict)<input id="au_head" style="width:100%" value="${esc(ex?ex.headline:"")}" placeholder="e.g. PRS Origin: absence noted, never priced"></label></div>
@@ -1180,6 +1304,7 @@ function h2hPanel(team){
   if(h2hOpp&&ALLPROF){
     const E=matchupEngine(team,h2hOpp,h2hVenue==="home");
     if(E){
+      window.LAST_E={match:team+" vs "+h2hOpp,ts:Date.now(),base:E.base,xg:E.gA+"-"+E.gB,wdl:E.poisson,form:E.form,arch:E.arch,h2h:E.h2h,cong:E.cong.v,dossier:E.dos?E.dos.v:0,script:E.script.code,low_sample:E.lowSample};
       const bar=(w,d,l)=>`<div style="display:flex;height:22px;border-radius:6px;overflow:hidden;margin:8px 0;font-size:11px;font-weight:700">
         <div style="width:${w}%;background:var(--green);display:flex;align-items:center;justify-content:center;color:#0b0e13">${w}%</div>
         <div style="width:${d}%;background:var(--muted);display:flex;align-items:center;justify-content:center;color:#0b0e13">${d}%</div>
