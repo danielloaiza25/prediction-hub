@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Prediction Hub</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#141922">
+<link rel="apple-touch-icon" href="icon-192.png">
 <style>
 :root{
   --bg:#0b0e13; --panel:#141922; --panel2:#1a2130; --border:#242d3f;
@@ -1773,6 +1776,7 @@ function backup(){
 }
 
 /* ---------- INIT ---------- */
+if("serviceWorker" in navigator){navigator.serviceWorker.register("sw.js").catch(()=>{});}
 window.addEventListener("hashchange",()=>{TAB=location.hash.replace("#","")||"dashboard";render();});
 loadAll().then(()=>{if(TAB==="calculator")calc(); syncPL(true);}).catch(e=>{document.getElementById("main").innerHTML='<div class="panel"><h2>Connection error</h2><p class="muted">'+esc(e.message)+'</p></div>';});
 setInterval(()=>syncPL(true), 5*60*1000); // refresh PL data every 5 min while the Hub is open
