@@ -263,6 +263,7 @@ function boardKey(){
 }
 function kalshiWinner(team,maxP){const pay=Math.round(100/maxP*100);return `Buy YES on “${team} wins?” — LIMIT order at ${maxP}¢ or less · $100 → ~$${pay} if they win`;}
 function kalshiNo(team,maxP){const pay=Math.round(100/maxP*100);return `Buy NO on “${team} wins?” — LIMIT at ${maxP}¢ · pays on opponent win OR draw · $100 → ~$${pay}`;}
+function kalshiBtts(maxP){const pay=Math.round(100/maxP*100);return `Buy YES on “Both teams score?” — LIMIT at ${maxP}¢ · $100 → ~$${pay}`;}
 function kalshiTotal(over,maxP){const pay=Math.round(100/maxP*100);return `Buy ${over?"YES":"NO"} on “3+ combined goals?” — LIMIT at ${maxP}¢ · $100 → ~$${pay} if ${over?"Over":"Under"} (skip if Kalshi doesn't list this game's totals)`;}
 async function buildBoard(force){
   const key=boardKey(); if(!key){BOARD={key:null,plays:[],passed:0};return;}
@@ -330,6 +331,12 @@ async function buildBoard(force){
       fid:f.id,mkt:{k:"under"},locked:alerts.length>0,
       why:"The model expects only about "+E.totalG+" goals — a tight, low-event game."+(E.script.lean.includes("Under")?" Game script agrees.":""),
       note:E.script.lean.includes("Under")?"script agrees: "+E.script.code:""});
+    // 3b) BOTH TEAMS TO SCORE — the best same-match combo partner for Over 2.5
+    const btP=E.poisson.btts;
+    if(btP>=58) plays.push({match:A+" vs "+B,day,bet:"Both teams to score",our:Math.round(btP),type:"btts",tags:[["GOALS","neutral"],...lineupTag],
+      fid:f.id,mkt:{k:"btts"},locked:alerts.length>0,
+      why:"Both defences leak in this shape — the model has both sides scoring in "+Math.round(btP)+" games out of 100.",
+      note:""});
     // 4) LIVE conditional (shaky leads)
     for(const [tm,opp] of [[A,B],[B,A]]){
       const d3=DOSS&&DOSS[tm];
@@ -352,7 +359,7 @@ async function buildBoard(force){
         if(p.tags.some(t=>String(t[0]).startsWith("LINEUP RISK"))) p.stakeNote="after XIs confirmed";
       }
     }
-    p.kalshi=p.type==="winner"?kalshiWinner(p.team,p.maxPrice):p.type==="no"?kalshiNo(p.team,p.maxPrice):p.type==="over"?kalshiTotal(true,p.maxPrice):p.type==="under"?kalshiTotal(false,p.maxPrice):p.note;
+    p.kalshi=p.type==="winner"?kalshiWinner(p.team,p.maxPrice):p.type==="no"?kalshiNo(p.team,p.maxPrice):p.type==="over"?kalshiTotal(true,p.maxPrice):p.type==="under"?kalshiTotal(false,p.maxPrice):p.type==="btts"?kalshiBtts(p.maxPrice):p.note;
   }
   for(let i=0;i<plays.length;i++){const p=plays[i];p._i=i;
     p.comboOk = p.our!=null && p.type!=="live" && !p.locked && p.our>=55;}
@@ -368,6 +375,7 @@ const COMBO_ROI_EDGE=0.05;     // and only if its ROI clearly beats betting the 
 const RFQ_MARKUP=1.05;         // market makers price combos above the product of legs
 function legHit(p,a,b){
   const k=p.mkt&&p.mkt.k;
+  if(k==="btts")return a>=1&&b>=1;
   if(k==="winner")return p.mkt.home? a>b : b>a;
   if(k==="no")return p.mkt.home? a<=b : b<=a;
   if(k==="over")return a+b>=3;
@@ -1431,7 +1439,7 @@ function matchupEngine(A,B,venueHome){
   const relA=relOf(A), relB=relOf(B);
   const alerts=DB.players.filter(p=>(p.team===A||p.team===B)&&p.prs>=8&&p.status&&p.status!=="fit"&&p.status!=="unavailable");
   const lowSample=rA.n<8||rB.n<8;
-  return {gA:+gA.toFixed(2),gB:+gB.toFixed(2),poisson:{w:+(P.w*scale*100).toFixed(1),d:+(pd*100).toFixed(1),l:+(P.l*scale*100).toFixed(1),o:+(P.o*100).toFixed(1),best:P.best},
+  return {gA:+gA.toFixed(2),gB:+gB.toFixed(2),poisson:{w:+(P.w*scale*100).toFixed(1),d:+(pd*100).toFixed(1),l:+(P.l*scale*100).toFixed(1),o:+(P.o*100).toFixed(1),btts:+(P.btts*100).toFixed(1),best:P.best},
     win:+win.toFixed(1),form,arch,h2h,cong,script,base,alerts,lowSample,blended:rA.blended||rB.blended,nA:rA.n,nB:rB.n,
     totalG:+(gA+gB).toFixed(2),relA,relB,dos,grid:P.grid};
 }
