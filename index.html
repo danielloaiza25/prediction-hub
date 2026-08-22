@@ -272,11 +272,12 @@ async function buildBoard(force){
   const ups=DB.plf.filter(f=>!f.started&&f.kickoff&&new Date(f.kickoff)>Date.now()).sort((a,b)=>new Date(a.kickoff)-new Date(b.kickoff));
   const mw=ups.length?ups[0].event:null;
   const fixtures=ups.filter(f=>f.event===mw);
-  const plays=[]; let passed=0;
+  const plays=[]; let passed=0; const grids={};
   for(const f of fixtures){
     const A=f.team_h_name,B=f.team_a_name;
     const E=matchupEngine(A,B,true);
     if(!E){passed++;continue;}
+    grids[f.id]=E.grid;
     const alerts=E.alerts||[];
     const lineupTag=alerts.length?[["LINEUP RISK: "+alerts.map(p=>p.name).join(", "),"danger"]]:[];
     const day=new Date(f.kickoff).toLocaleDateString([],{weekday:"short"});
@@ -303,27 +304,39 @@ async function buildBoard(force){
         const favStakes=favHome?stA:stB, oppStakes=favHome?stB:stA;
         const motPrem=favStakes.tag==="F"&&oppStakes.tag==="S";
         if(motPrem)tags.push(["MOTIVATION PREMIUM — extra margin","danger"]);
-        plays.push({match:A+" vs "+B,day,bet:wteam+" to win",our:wp,type:"winner",team:wteam,tags,motPrem,note:"engine "+E.gA+"–"+E.gB+" · most likely "+E.poisson.best});
+        plays.push({match:A+" vs "+B,day,bet:wteam+" to win",our:wp,type:"winner",team:wteam,tags,motPrem,
+          fid:f.id,mkt:{k:"winner",home:favHome},locked:alerts.length>0,
+          why:wteam+" are the stronger side here — the model expects roughly "+E.gA+"–"+E.gB+"."+(E.dos&&E.dos.notes.length?" "+E.dos.notes[0]:""),
+          note:"engine "+E.gA+"–"+E.gB+" · most likely "+E.poisson.best});
       }
     }
     // 2) NO on favorite (SIEGE / trap)
     const noP=100-wp;
     const trap=bandTag(wteam,wp);
     if((E.script.code.startsWith("A SIEGE")||(trap&&trap[1]<0))&&noP>=42){
-      plays.push({match:A+" vs "+B,day,bet:"Fade "+wteam+" (NO)",our:noP,type:"no",team:wteam,
+      plays.push({match:A+" vs "+B,day,bet:wteam===A?B+" or draw":A+" or draw",our:noP,type:"no",team:wteam,
         tags:[["NO / DRAW+","neutral"],[(E.script.code.startsWith("A")?"SCRIPT A SIEGE":"vs trap band"),"warning"],...(trap&&trap[1]<0?[trap[0]]:[]),...lineupTag],
-        note:"pays on "+(favHome?B:A)+" win OR draw — draws spike vs blocks"});
+        fid:f.id,mkt:{k:"no",home:favHome},locked:alerts.length>0,
+        why:"The market overrates "+wteam+" here, and draws are common in this kind of game — you win unless "+wteam+" do.",
+        note:"pays on "+(favHome?B:A)+" win OR draw"});
     }
     // 3) TOTALS
     const oP=E.poisson.o;
-    if(oP>=58) plays.push({match:A+" vs "+B,day,bet:"Over 2.5 lean",our:Math.round(oP),type:"over",tags:[["TOTALS","neutral"],["expected goals "+E.totalG,"neutral"],...lineupTag],note:E.script.lean.includes("Over")?"script agrees: "+E.script.code:""});
-    if(oP<=42) plays.push({match:A+" vs "+B,day,bet:"Under 2.5 lean",our:Math.round(100-oP),type:"under",tags:[["TOTALS","neutral"],["expected goals "+E.totalG,"neutral"],...lineupTag],note:E.script.lean.includes("Under")?"script agrees: "+E.script.code:""});
+    if(oP>=58) plays.push({match:A+" vs "+B,day,bet:"Over 2.5 goals",our:Math.round(oP),type:"over",tags:[["TOTALS","neutral"],...lineupTag],
+      fid:f.id,mkt:{k:"over"},locked:alerts.length>0,
+      why:"The model expects about "+E.totalG+" goals — both sides trade chances in this shape."+(E.script.lean.includes("Over")?" Game script agrees.":""),
+      note:E.script.lean.includes("Over")?"script agrees: "+E.script.code:""});
+    if(oP<=42) plays.push({match:A+" vs "+B,day,bet:"Under 2.5 goals",our:Math.round(100-oP),type:"under",tags:[["TOTALS","neutral"],...lineupTag],
+      fid:f.id,mkt:{k:"under"},locked:alerts.length>0,
+      why:"The model expects only about "+E.totalG+" goals — a tight, low-event game."+(E.script.lean.includes("Under")?" Game script agrees.":""),
+      note:E.script.lean.includes("Under")?"script agrees: "+E.script.code:""});
     // 4) LIVE conditional (shaky leads)
     for(const [tm,opp] of [[A,B],[B,A]]){
       const d3=DOSS&&DOSS[tm];
       if(d3&&d3.ht_states&&d3.ht_states.lead&&d3.ht_states.lead.n>=30&&d3.ht_states.lead.l>=14){
-        plays.push({match:A+" vs "+B,day,bet:"In-play: lay a "+tm+" HT lead",our:null,type:"live",
-          tags:[["LIVE PLAN","neutral"],[tm+" blow "+d3.ht_states.lead.l+"% of HT leads","danger"]],
+        plays.push({match:A+" vs "+B,day,bet:"In-play: lay a "+tm+" half-time lead",our:null,type:"live",
+          tags:[["LIVE PLAN","neutral"]],locked:true,
+          why:tm+" throw away "+d3.ht_states.lead.l+"% of the games they lead at half-time — wait for that state, don't predict it.",
           note:"IF "+tm+" lead at HT: buy NO on “"+tm+" wins?” if it trades 15-25¢ under fair"});
       }
     }
@@ -341,8 +354,89 @@ async function buildBoard(force){
     }
     p.kalshi=p.type==="winner"?kalshiWinner(p.team,p.maxPrice):p.type==="no"?kalshiNo(p.team,p.maxPrice):p.type==="over"?kalshiTotal(true,p.maxPrice):p.type==="under"?kalshiTotal(false,p.maxPrice):p.note;
   }
-  BOARD={key,ts:Date.now(),mw,plays,passed,total:fixtures.length};
+  for(let i=0;i<plays.length;i++){const p=plays[i];p._i=i;
+    p.comboOk = p.our!=null && p.type!=="live" && !p.locked && p.our>=55;}
+  SEL=new Set();
+  BOARD={key,ts:Date.now(),mw,plays,passed,total:fixtures.length,grids};
+  BOARD.suggested=bestCombos();
   try{localStorage.setItem(key,JSON.stringify(BOARD));}catch(e){}
+}
+/* ---------- COMBO ENGINE ---------- */
+let SEL=new Set();
+const COMBO_MIN_HIT=0.35;      // never surface a combo that hits less than 35 in 100
+const COMBO_ROI_EDGE=0.05;     // and only if its ROI clearly beats betting the legs separately
+const RFQ_MARKUP=1.05;         // market makers price combos above the product of legs
+function legHit(p,a,b){
+  const k=p.mkt&&p.mkt.k;
+  if(k==="winner")return p.mkt.home? a>b : b>a;
+  if(k==="no")return p.mkt.home? a<=b : b<=a;
+  if(k==="over")return a+b>=3;
+  if(k==="under")return a+b<=2;
+  return false;
+}
+function gridMarginal(p,g){let s=0;for(let a=0;a<=7;a++)for(let b=0;b<=7;b++)if(legHit(p,a,b))s+=g[a][b];return s;}
+function jointProb(legs){
+  if(!legs.length)return null;
+  const byFx={};
+  for(const p of legs){ if(p.fid==null||!p.mkt)return null; (byFx[p.fid]=byFx[p.fid]||[]).push(p); }
+  let prob=1;
+  for(const fid in byFx){
+    const grp=byFx[fid];
+    if(grp.length===1){ prob*=grp[0].our/100; continue; }
+    const g=BOARD&&BOARD.grids&&BOARD.grids[fid];
+    if(!g)return null;
+    let joint=0;
+    for(let a=0;a<=7;a++)for(let b=0;b<=7;b++){ if(grp.every(p=>legHit(p,a,b))) joint+=g[a][b]; }
+    // re-scale so each leg still matches the probability shown on its card, keeping the correlation
+    for(const p of grp){ const m=gridMarginal(p,g); if(m>0.02) joint*=(p.our/100)/m; }
+    prob*=joint;
+  }
+  const cap=Math.min(...legs.map(p=>p.our/100));
+  return Math.max(0,Math.min(prob,cap));
+}
+function comboQuote(legs){
+  const prob=jointProb(legs); if(prob==null)return null;
+  let price=1; for(const p of legs) price*=p.maxPrice/100;
+  price=Math.max(0.01,Math.min(0.97,price*RFQ_MARKUP));
+  const roi=prob/price-1;
+  const singlesRoi=legs.reduce((a,p)=>a+((p.our/100)/(p.maxPrice/100)-1),0)/legs.length;
+  const sameMatch=new Set(legs.map(p=>p.fid)).size<legs.length;
+  const BK=+(DB.settings.bankroll&&DB.settings.bankroll.amount)||0;
+  const kelly=Math.max(0,(prob-price)/(1-price))*0.25*0.5;   // quarter-Kelly, then halved for combo variance
+  const stake=BK?Math.max(1,Math.round(BK*Math.min(0.025,Math.max(0.005,kelly)))):null;
+  return {prob,price,roi,singlesRoi,sameMatch,stake,payout:stake?+(stake/price).toFixed(0):null,
+    good:prob>=COMBO_MIN_HIT&&roi>=singlesRoi+COMBO_ROI_EDGE};
+}
+function bestCombos(){
+  const pool=(BOARD&&BOARD.plays||[]).filter(p=>p.comboOk).sort((a,b)=>b.our-a.our).slice(0,10);
+  const out=[];
+  const rec=(start,cur)=>{
+    if(cur.length>=2){
+      const q=comboQuote(cur);
+      if(q&&q.good)out.push({legs:cur.map(p=>p._i),q});
+    }
+    if(cur.length>=4)return;
+    for(let i=start;i<pool.length;i++)rec(i+1,[...cur,pool[i]]);
+  };
+  rec(0,[]);
+  out.sort((a,b)=>b.q.roi-a.q.roi);
+  return out.slice(0,3).map(c=>({legs:c.legs,prob:+(c.q.prob*100).toFixed(0),roi:+(c.q.roi*100).toFixed(0),
+    singles:+(c.q.singlesRoi*100).toFixed(0),stake:c.q.stake,payout:c.q.payout,sameMatch:c.q.sameMatch}));
+}
+function toggleLeg(i){ if(SEL.has(i))SEL.delete(i); else SEL.add(i); render(); }
+function selectCombo(idxs){ SEL=new Set(idxs); render(); toast("Combo loaded into the slip"); }
+async function logCombo(){
+  const legs=(BOARD.plays||[]).filter(p=>SEL.has(p._i));
+  if(legs.length<2)return;
+  const q=comboQuote(legs); if(!q)return;
+  const price=prompt("Combo price actually paid (cents):",Math.round(q.price*100));
+  if(!price)return;
+  const stake=prompt("Stake ($):",q.stake||2); if(!stake)return;
+  try{
+    await api("bets_ledger",{method:"POST",body:{match:legs.map(p=>p.match).join(" + "),market:"combo",
+      side:legs.map(p=>p.bet).join(" AND "),our_prob:+(q.prob*100).toFixed(0),price_cents:+price,stake:+stake}});
+    toast("Combo logged to ledger"); loadAll();
+  }catch(e){toast(e.message,false)}
 }
 async function saveBankroll(v){
   if(!v||v<=0)return;
@@ -378,28 +472,63 @@ async function fetchLivePrices(){
   try{localStorage.setItem(BOARD.key,JSON.stringify(BOARD));}catch(e){}
   render(); toast("Live prices attached where markets exist");
 }
+function pbar(pct){return `<div style="height:6px;width:74px;background:#0f1420;border-radius:4px;overflow:hidden;display:inline-block;vertical-align:middle"><i style="display:block;height:100%;width:${Math.max(3,Math.min(100,pct))}%;background:var(--accent)"></i></div>`;}
+function comboPanel(){
+  const legs=(BOARD.plays||[]).filter(p=>SEL.has(p._i));
+  if(legs.length<2)return `<div class="detail" style="margin-top:12px"><p class="small muted">Tick two or more bets above to test them as a combo.</p></div>`;
+  const q=comboQuote(legs);
+  if(!q)return `<div class="detail" style="margin-top:12px"><p class="small muted">These legs can't be combined.</p></div>`;
+  const col=q.good?"var(--green)":"var(--red)";
+  const bg=q.good?"rgba(46,204,113,.10)":"rgba(231,76,91,.08)";
+  return `<div style="margin-top:12px;background:${bg};border:1px solid ${col};border-radius:12px;padding:12px 14px">
+    <div class="flex"><b style="color:${col};font-size:15px">Combo: ${legs.length} legs</b>
+      <span style="color:${col}" class="small">hits ${Math.round(q.prob*100)} times in 100</span>
+      <b class="right" style="color:${col};font-size:15px">${q.stake?"$"+q.stake+" pays $"+q.payout:"set a bankroll for stakes"}</b></div>
+    <div class="flex small" style="margin-top:8px;gap:10px">
+      ${chipHtml("combo ROI "+(q.roi>0?"+":"")+Math.round(q.roi*100)+"%",q.good?"success":"danger")}
+      ${chipHtml("same legs separately: "+(q.singlesRoi>0?"+":"")+Math.round(q.singlesRoi*100)+"%","neutral")}
+      <b style="color:${col}">${q.good?"✓ combo wins — take it":(q.prob<COMBO_MIN_HIT?"✗ hits too rarely ("+Math.round(q.prob*100)+"% — floor is 35%) — bet them separately":"✗ singles pay better — bet them separately")}</b></div>
+    <p class="small" style="margin-top:8px;color:var(--muted)">${q.sameMatch?"Same match — correlation priced from the full scoreline grid, not naive multiplication.":"Different matches — one result can't drag the other down."} Stake is halved because combos lose more often.</p>
+    ${q.good?`<div class="flex" style="margin-top:8px"><button class="btn sm" onclick="logCombo()">Log this combo</button></div>`:""}
+  </div>`;
+}
 function renderBoard(){
   if(!BOARD)return '<p class="muted small">Loading…</p>';
   if(!BOARD.key)return '<p class="muted small">No upcoming matchweek scheduled yet — the board wakes up when fixtures load.</p>';
-  const ps=[...BOARD.plays].sort((a,b)=>boardSort==="win"?(b.our||0)-(a.our||0):((b.ev??-99)-(a.ev??-99)));
+  const ps=BOARD.plays||[];
   if(!ps.length)return '<p class="muted small">Matchweek '+BOARD.mw+': no edges found — all '+BOARD.total+' fixtures passed. Not betting is a position.</p>';
-  return `<p class="small muted" style="margin-bottom:8px">MW ${BOARD.mw} · ${ps.length} plays suggested · ${BOARD.passed} fixtures passed · generated ${new Date(BOARD.ts).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}</p>
-  ${ps.map((p,i)=>`<div class="detail" style="margin-bottom:8px">
-    <div class="flex"><span class="num muted" style="font-size:16px;min-width:20px">${i+1}</span>
-    <b>${esc(p.match)}</b><span class="muted small">${esc(p.day||"")}</span>
-    <span style="color:var(--blue);font-weight:700" class="small">${esc(p.bet)}</span>
-    <span class="right" style="display:flex;gap:5px;flex-wrap:wrap">${p.tags.map(t=>chipHtml(t[0],t[1])).join("")}</span></div>
-    ${p.our!=null?`<div class="flex small" style="margin:6px 0 0 28px;gap:16px">
-      <span>our <b class="num">${p.our}%</b></span><span>max price <b class="num">${p.maxPrice}¢</b></span>
-      <span class="pos">edge ≥ <b class="num">+5</b></span><span class="pos">EV <b class="num">+$${p.ev}</b>/$100</span>
-      ${p.stake?`<span style="color:var(--accent)">stake <b class="num">$${p.stake}</b> <span class="muted small">(${p.stakePct}% bank, ¼-Kelly)${p.stakeNote?" — "+p.stakeNote:""}</span></span>`:""}</div>`
-    :`<div class="small muted" style="margin:6px 0 0 28px">conditional — no pre-match position</div>`}
-    ${p.livePrice!=null?`<div class="small" style="margin:6px 0 0 28px"><span class="tag ${p.livePrice<=p.maxPrice?"hit":"miss"}">LIVE ${p.livePrice}¢ ${p.livePrice<=p.maxPrice?"— under your max, edge is REAL: act":"— above your max ("+p.maxPrice+"¢): PASS"}</span></div>`:""}
-    <div class="small" style="margin:6px 0 0 28px;padding:6px 9px;background:#0f1420;border-radius:8px">🏦 <b>Kalshi:</b> ${esc(p.kalshi)}
-    <button class="btn ghost sm" style="float:right" onclick="logBetFromBoard(${BOARD.plays.indexOf(p)})">💾 Log bet</button></div>
-    ${p.note?`<p class="small muted" style="margin:4px 0 0 28px">${esc(p.note)}</p>`:""}
+  ps.forEach((p,i)=>p._i=i);
+  const groups={};
+  for(const p of ps){ (groups[p.match]=groups[p.match]||{match:p.match,day:p.day,plays:[]}).plays.push(p); }
+  const gs=Object.values(groups);
+  gs.forEach(g=>g.best=Math.max(...g.plays.map(p=>boardSort==="win"?(p.our||0):(p.ev??-99))));
+  gs.sort((a,b)=>b.best-a.best);
+  const sug=BOARD.suggested||[];
+  return `<p class="small muted" style="margin-bottom:10px">MW ${BOARD.mw} · ${ps.length} plays across ${gs.length} matches · ${BOARD.passed} fixtures passed · ${SEL.size} ticked</p>
+  ${gs.map(g=>`<div class="detail" style="margin-bottom:10px;padding:12px 14px">
+    <div class="flex"><b style="font-size:15px">${esc(g.match)}</b><span class="muted small">${esc(g.day||"")}</span>
+      ${g.plays.some(p=>p.locked&&p.type!=="live")?chipHtml("wait for lineups","warning"):""}</div>
+    ${g.plays.map(p=>`
+      <div class="flex" style="margin-top:9px;gap:9px">
+        <input type="checkbox" style="width:16px;height:16px" ${SEL.has(p._i)?"checked":""} ${(p.locked||p.our==null)?"disabled":""} onchange="toggleLeg(${p._i})">
+        <span style="min-width:145px;font-size:14px">${esc(p.bet)}</span>
+        ${p.our!=null?`${pbar(p.our)} <b class="num" style="font-size:15px">${p.our}%</b>`:'<span class="muted small">conditional</span>'}
+        ${p.stake?`<b class="num" style="color:var(--accent)">$${p.stake}</b>`:""}
+        ${p.our!=null?(p.comboOk?chipHtml("combo-friendly","success"):chipHtml("don't combo","warning")):""}
+        <span class="right small ${p.livePrice!=null?(p.livePrice<=p.maxPrice?"pos":"neg"):"muted"}">${p.our==null?"wait for the game state":(p.livePrice!=null?(p.livePrice<=p.maxPrice?"live "+p.livePrice+"¢ — buy now":"live "+p.livePrice+"¢ — too dear, pass"):"buy at "+p.maxPrice+"¢ or less")}</span>
+        ${p.our!=null&&!p.locked?`<button class="btn ghost sm" onclick="logBetFromBoard(${p._i})">log</button>`:""}
+      </div>
+      <p class="small muted" style="margin:3px 0 0 26px">${esc(p.why||p.note||"")}</p>`).join("")}
   </div>`).join("")}
-  <p class="small muted" style="margin-top:8px">Engine + dossier numbers only — PRS/lineups NOT yet applied. Run flagged matches through the full pipeline before staking; any LINEUP RISK = wait for XIs (Rule 2). Confirm live prices on Kalshi — always LIMIT orders, never market-buy.</p>`;
+  ${sug.length?`<div class="panel" style="margin-top:12px;border-color:var(--green)"><h2 style="color:var(--green)">Combos worth taking this week</h2>
+    ${sug.map(c=>`<div class="flex small" style="margin:6px 0">
+      <span style="flex:1">${c.legs.map(i=>esc((ps[i]||{}).match||"")+" — "+esc((ps[i]||{}).bet||"")).join("  +  ")}</span>
+      <b class="num">hits ${c.prob}/100</b><span class="pos num">ROI +${c.roi}%</span>
+      <span class="muted small">(singles +${c.singles}%)</span>${c.stake?`<b class="num" style="color:var(--accent)">$${c.stake}→$${c.payout}</b>`:""}
+      <button class="btn ghost sm" onclick="selectCombo([${c.legs.join(",")}])">load</button></div>`).join("")}
+    </div>`:`<p class="small muted" style="margin-top:10px">No combo this week beats betting the legs separately — that's the normal answer, and it's the one that protects the bankroll.</p>`}
+  ${comboPanel()}
+  <p class="small muted" style="margin-top:10px">Probabilities are engine + dossier only — your PRS read still goes on top. Locked rows unlock when lineups confirm (Rule 2). Always LIMIT orders at the stated price.</p>`;
 }
 function openScanReport(fid){
   const f=getFx(fid); if(!f)return;
@@ -1148,18 +1277,24 @@ function leagueAvg(season){
   return c?sx/c:1.4;
 }
 function pois(l,k){let p=Math.exp(-l);for(let i=1;i<=k;i++)p*=l/i;return p;}
-function poissonWDL(gA,gB){
-  // Dixon-Coles low-score correction (rho<0 boosts 0-0/1-1, trims 1-0/0-1)
+function dcGrid(gA,gB){
+  // Dixon-Coles corrected scoreline matrix (normalised) — the basis for combo joint probabilities
   const RHO=-0.11;
   const tau=(x,y)=>x===0&&y===0?1-gA*gB*RHO:x===0&&y===1?1+gA*RHO:x===1&&y===0?1+gB*RHO:x===1&&y===1?1-RHO:1;
-  let w=0,d=0,l=0,o=0,tot=0,best={p:0,s:"1-1"};
-  for(let a=0;a<=7;a++)for(let b=0;b<=7;b++){
-    let p=pois(gA,a)*pois(gB,b)*tau(a,b); if(p<0)p=0; tot+=p;
+  const g=[];let tot=0;
+  for(let a=0;a<=7;a++){g[a]=[];for(let b=0;b<=7;b++){let p=pois(gA,a)*pois(gB,b)*tau(a,b);if(p<0)p=0;g[a][b]=p;tot+=p;}}
+  for(let a=0;a<=7;a++)for(let b=0;b<=7;b++)g[a][b]=g[a][b]/tot;
+  return g;
+}
+function poissonWDL(gA,gB){
+  const g=dcGrid(gA,gB);
+  let w=0,d=0,l=0,o=0,bt=0,best={p:0,s:"1-1"};
+  for(let a=0;a<=7;a++)for(let b=0;b<=7;b++){const p=g[a][b];
     if(a>b)w+=p;else if(a===b)d+=p;else l+=p;
     if(a+b>=3)o+=p;
-    if(p>best.p)best={p,s:a+"-"+b};
-  }
-  return {w:w/tot,d:d/tot,l:l/tot,o:o/tot,best:best.s};
+    if(a>=1&&b>=1)bt+=p;
+    if(p>best.p)best={p,s:a+"-"+b};}
+  return {w,d,l,o,btts:bt,best:best.s,grid:g};
 }
 
 /* ---- archetypes & patterns ---- */
@@ -1298,7 +1433,7 @@ function matchupEngine(A,B,venueHome){
   const lowSample=rA.n<8||rB.n<8;
   return {gA:+gA.toFixed(2),gB:+gB.toFixed(2),poisson:{w:+(P.w*scale*100).toFixed(1),d:+(pd*100).toFixed(1),l:+(P.l*scale*100).toFixed(1),o:+(P.o*100).toFixed(1),best:P.best},
     win:+win.toFixed(1),form,arch,h2h,cong,script,base,alerts,lowSample,blended:rA.blended||rB.blended,nA:rA.n,nB:rB.n,
-    totalG:+(gA+gB).toFixed(2),relA,relB,dos};
+    totalG:+(gA+gB).toFixed(2),relA,relB,dos,grid:P.grid};
 }
 function h2hPanel(team){
   const all=[...new Set((HIST||[]).flatMap(m=>[m.home,m.away]))].filter(t2=>t2!==team).sort();
