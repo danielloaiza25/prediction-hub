@@ -220,7 +220,7 @@ function plBanner(){
     const live=fxLive(f), done=fxDone(f);
     const sc=f.team_h_score==null?"":`<b style="color:var(--text)">${f.team_h_score}</b>-<b style="color:var(--text)">${f.team_a_score}</b>`;
     const when=!done&&!live?`<span style="color:#4d5766">${f.kickoff?new Date(f.kickoff).toLocaleDateString([],{weekday:"short"})+" "+new Date(f.kickoff).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):""}</span>`:"";
-    return `<span style="background:#151d29;border-radius:7px;padding:6px 9px;font-size:12px;color:var(--muted);white-space:nowrap;display:inline-flex;gap:5px;align-items:center">
+    return `<span style="background:#151d29;border-radius:20px;padding:6px 12px;font-size:12px;color:var(--muted);white-space:nowrap;display:inline-flex;gap:5px;align-items:center">
       ${live?`<span style="color:var(--red);font-size:10px;letter-spacing:.05em">&#9679; live</span>`:""}
       ${abbr(f.team_h_name)} ${sc||when} ${abbr(f.team_a_name)}</span>`;
   };
@@ -236,7 +236,7 @@ function plBanner(){
         <button class="btn ghost sm" onclick="syncPL(false)" style="margin-left:8px">&#8635;</button></div>
     </div>
     ${fx.length?`<div class="flex" style="gap:6px;margin-top:11px">${shown.map(chip).join("")}
-      ${rest>0?`<span style="background:#151d29;border-radius:7px;padding:6px 9px;font-size:12px;color:#4d5766">+${rest}</span>`:""}</div>`:""}
+      ${rest>0?`<span style="background:#151d29;border-radius:20px;padding:6px 12px;font-size:12px;color:#4d5766">+${rest}</span>`:""}</div>`:""}
   </div>`;
 }
 function plTable(){
@@ -598,7 +598,8 @@ function openScanReport(fid){
   go("pltable");
 }
 function multFromMax(mp){return (100/mp).toFixed(2);}
-let DASHWHY=null, DASHTEAM=null;
+let DASHWHY=null, DASHTEAM=null, NEWS=null, NEWSFIL="all", NEWSMORE=false;
+function setNewsFil(k){ NEWSFIL=k; render(); }
 function toggleWhy(i){ DASHWHY=(DASHWHY===i?null:i); render(); }
 function toggleDashTeam(t){ DASHTEAM=(DASHTEAM===t?null:t); render(); }
 function tableCalc(fxs){
@@ -644,6 +645,7 @@ function vSimpleDashboard(){
     const d=pts.map((v,i)=>`${(i/(pts.length-1)*150).toFixed(1)},${(30-((v-mn)/rg)*26).toFixed(1)}`).join(" ");
     return `<svg viewBox="0 0 150 32" style="width:100%;height:32px"><polyline points="${d}" fill="none" stroke="${cum>=0?"var(--green)":"var(--red)"}" stroke-width="2"/></svg>`; })();
   const S=typeStats();
+  const TH=Object.values(S).reduce((a,o)=>a+o.h,0), TT=Object.values(S).reduce((a,o)=>a+o.t,0);
   const barRow=(label,o)=>{
     const pct=o.t?Math.round(100*o.h/o.t):0;
     const be=o.pn?Math.round(o.ps/o.pn):52;
@@ -675,40 +677,84 @@ function vSimpleDashboard(){
   return plBanner()+boot+`
   ${alerts.length?`<div class="panel" style="margin-top:10px;border-color:var(--red);padding:8px 12px">
     ${alerts.map(p=>`<span class="small">⚠ <b>${esc(p.name)}</b> (${esc(p.team)}, PRS ${p.prs}) ${esc(p.status)} — wait for lineups before betting ${esc(p.team)}</span>`).join("<br>")}</div>`:""}
-  <div class="grid" style="grid-template-columns:1.62fr 1fr;gap:12px;margin-top:10px;align-items:start">
-    <div class="panel" style="margin:0;padding:0;overflow:hidden">
-      <div class="flex" style="padding:10px 12px 6px"><h2 style="margin:0">Plays this matchday</h2>
-        <button class="btn ghost sm right" onclick="refreshBoard(true)">↻</button></div>
-      <div class="flex small muted" style="padding:4px 12px;border-bottom:1px solid var(--border)">
-        <span style="flex:1">play</span><span style="width:44px;text-align:right">hit</span>
-        <span style="width:46px;text-align:right">odds</span><span style="width:120px;text-align:right">my bet</span></div>
-      ${plays.length?plays.map(p=>{
-        const lg=isLogged(p);
-        return `<div style="border-bottom:1px solid var(--border)">
-        <div class="flex" style="padding:7px 12px;gap:6px;align-items:center">
-          <span style="flex:1;min-width:0"><b>${esc(p.bet)}</b> <span class="muted small">${esc(p.match)}</span>
-            ${p.why||p.note?`<span class="rowbtn" style="cursor:pointer;color:var(--accent)" onclick="toggleWhy(${p._i})">&#9432;</span>`:""}</span>
-          <b class="num" style="width:44px;text-align:right;color:${p.our>=60?"var(--green)":"inherit"}">${p.our}%</b>
-          <span class="num small muted" style="width:46px;text-align:right">${multFromMax(p.maxPrice)}x</span>
-          ${lg?`<span class="small" style="width:120px;text-align:right;color:var(--green)">✓ logged</span>`
-            :p.locked?`<span class="small" style="width:120px;text-align:right"><span class="tag watch">lineups</span></span>`
-            :`<span style="width:120px;text-align:right;white-space:nowrap">
-              <input id="dv_${p._i}" type="number" placeholder="${p.stake||10}" style="width:52px;padding:3px 6px;text-align:right">
-              <input id="dm_${p._i}" type="number" step="0.01" value="${multFromMax(p.maxPrice)}" style="width:52px;padding:3px 6px;text-align:right">
-              <button class="btn sm" style="padding:3px 8px" onclick="quickLog(${p._i})">log</button></span>`}
-        </div>
-        ${DASHWHY===p._i?`<div style="padding:0 12px 9px"><p class="small" style="margin:0;color:var(--accent)">${esc(p.why||p.note||"")} · suggested $${p.stake||10} (quarter-kelly)</p></div>`:""}
-      </div>`;}).join(""):'<p class="muted small" style="padding:12px">No edges on the board yet — it scans automatically as fixtures approach.</p>'}
+  <div class="grid" style="grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:10px">
+    <div class="panel" style="margin:0;border-left:3px solid var(--green);border-radius:0 10px 10px 0;padding:12px 14px">
+      <div style="font-size:11px;letter-spacing:.06em;color:#5d6879">bankroll</div>
+      <div class="num" style="font-size:24px;font-weight:500;line-height:1.25">$${bank.toFixed(0)}</div>
+      <div class="small ${pnl>=0?"pos":"neg"}">${pnl>=0?"+":""}$${pnl.toFixed(0)} · ${((pnl/((bank-pnl)||1))*100).toFixed(1)}%</div>
+      ${spark}</div>
+    <div class="panel" style="margin:0;border-left:3px solid var(--blue);border-radius:0 10px 10px 0;padding:12px 14px">
+      <div style="font-size:11px;letter-spacing:.06em;color:#5d6879">riding now</div>
+      <div class="num" style="font-size:24px;font-weight:500;line-height:1.25">$${riding.toFixed(0)}</div>
+      ${open.length?open.slice(0,3).map(b=>`<div class="flex" style="margin:2px 0;font-size:11.5px"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">${esc(b.side||"")}</span><span class="muted num">$${(+b.stake).toFixed(0)}</span></div>`).join(""):'<div class="small" style="color:#5d6879">nothing open</div>'}
     </div>
-    <div>
-      <div class="panel" style="margin:0 0 10px;border-left:3px solid var(--green);border-radius:0 10px 10px 0"><div style="font-size:11px;letter-spacing:.06em;color:#5d6879">bankroll</div>
-        <div class="num" style="font-size:24px;font-weight:500;line-height:1.25">$${bank.toFixed(0)}</div>
-        <div class="small ${pnl>=0?"pos":"neg"}">${pnl>=0?"+":""}$${pnl.toFixed(0)} · ${bank?((pnl/(bank-pnl||1))*100).toFixed(1):"0"}%</div>
-        ${spark}</div>
-      <div class="panel" style="margin:0;border-left:3px solid var(--blue);border-radius:0 10px 10px 0"><div style="font-size:11px;letter-spacing:.06em;color:#5d6879">riding now · $${riding.toFixed(0)}</div>
-        ${open.length?open.slice(0,5).map(b=>`<div class="flex small" style="margin:3px 0"><span style="flex:1">${esc(b.side||"")}</span><span class="muted num">$${(+b.stake).toFixed(0)}</span></div>`).join(""):'<p class="small muted" style="margin:4px 0 0">Nothing open.</p>'}
+    <div class="panel" style="margin:0;border-left:3px solid var(--accent);border-radius:0 10px 10px 0;padding:12px 14px">
+      <div style="font-size:11px;letter-spacing:.06em;color:#5d6879">engine hit rate</div>
+      <div class="num" style="font-size:24px;font-weight:500;line-height:1.25">${TT?Math.round(100*TH/TT)+"%":"—"}</div>
+      <div class="small" style="color:#5d6879">${TT?TH+"-"+(TT-TH)+" graded":"no graded picks yet"}</div></div>
+    <div class="panel" style="margin:0;border-left:3px solid var(--purple);border-radius:0 10px 10px 0;padding:12px 14px">
+      <div style="font-size:11px;letter-spacing:.06em;color:#5d6879">plays on the board</div>
+      <div class="num" style="font-size:24px;font-weight:500;line-height:1.25">${plays.length}</div>
+      <div class="small" style="color:#5d6879">${plays.filter(p=>isLogged(p)).length} logged · ${plays.filter(p=>p.locked).length} awaiting lineups</div></div>
+  </div>
+  <div class="panel" style="padding:0;overflow:hidden">
+    <div class="flex" style="padding:13px 16px 8px"><h2 style="margin:0;font-size:16px">Plays this matchday</h2>
+      <span class="small right" style="color:#5d6879">tap the mark for the reasoning</span>
+      <button class="btn ghost sm" onclick="refreshBoard(true)">&#8635;</button></div>
+    <div class="flex small" style="padding:5px 16px;border-bottom:1px solid var(--border);color:#5d6879;gap:6px">
+      <span style="flex:1">play</span><span style="width:60px;text-align:right">hit</span>
+      <span style="width:60px;text-align:right">odds</span><span style="width:200px;text-align:right">my bet</span></div>
+    ${plays.length?plays.map(p=>{
+      const lg=isLogged(p);
+      return `<div style="border-bottom:1px solid var(--border)">
+      <div class="flex" style="padding:11px 16px;gap:6px;align-items:center">
+        <span style="flex:1;min-width:0;font-size:14.5px"><b>${esc(p.bet)}</b> <span class="muted" style="font-size:13px">${esc(p.match)}</span>
+          ${p.why||p.note?`<span class="rowbtn" style="cursor:pointer;color:var(--accent);margin-left:4px" onclick="toggleWhy(${p._i})">&#9432;</span>`:""}</span>
+        <b class="num" style="width:60px;text-align:right;font-size:17px;color:${p.our>=60?"var(--green)":"inherit"}">${p.our}%</b>
+        <span class="num" style="width:60px;text-align:right;color:var(--muted);font-size:13px">${multFromMax(p.maxPrice)}x</span>
+        ${lg?`<span style="width:200px;text-align:right;color:var(--green);font-size:13px">&#10003; logged</span>`
+          :p.locked?`<span style="width:200px;text-align:right"><span class="tag watch">wait for lineups</span></span>`
+          :`<span style="width:200px;text-align:right;white-space:nowrap">
+            <span class="muted" style="font-size:12px">$</span>
+            <input id="dv_${p._i}" type="number" placeholder="${p.stake||10}" style="width:62px;padding:5px 8px;text-align:right;font-size:13px">
+            <input id="dm_${p._i}" type="number" step="0.01" value="${multFromMax(p.maxPrice)}" style="width:62px;padding:5px 8px;text-align:right;font-size:13px">
+            <span class="muted" style="font-size:12px">x</span>
+            <button class="btn sm" style="padding:5px 11px" onclick="quickLog(${p._i})">log</button></span>`}
       </div>
-    </div>
+      ${DASHWHY===p._i?`<div style="padding:0 16px 11px"><p class="small" style="margin:0;color:var(--accent)">${esc(p.why||p.note||"")} · suggested $${p.stake||10} (quarter-kelly)</p></div>`:""}
+    </div>`;}).join(""):'<p class="muted small" style="padding:14px 16px">No edges on the board yet — it scans automatically as fixtures approach.</p>'}
+  </div>
+  </div>
+  ${(()=>{ if(NEWS===null){NEWS=[];api("news_items?select=*&order=published_at.desc&limit=60").then(r=>{NEWS=r;if(TAB==="dashboard")render();}).catch(()=>{});} return ""; })()}
+  <div class="panel" style="padding:0;overflow:hidden">
+    <div class="flex" style="padding:13px 16px 8px"><h2 style="margin:0;font-size:16px">News</h2>
+      <span class="small" style="color:#5d6879">${NEWSFIL==="all"?"everything":NEWSFIL}</span>
+      <span class="right flex" style="gap:4px">
+        ${["all","injury","transfer","manager","suspension"].map(k=>`<button class="btn ghost sm" style="padding:3px 9px;${NEWSFIL===k?"border-color:var(--accent);color:var(--accent)":""}" onclick="setNewsFil('${k}')">${k==="all"?"all":k}</button>`).join("")}
+      </span></div>
+    ${(()=>{
+      const mine=new Set([...(BOARD&&BOARD.plays||[]).flatMap(p=>String(p.match||"").split(" vs ")),...(DB.ledger||[]).filter(b=>!b.result).flatMap(b=>String(b.match||"").split(" vs "))].map(s=>s.trim()).filter(Boolean));
+      let ns=(NEWS||[]).filter(n=>NEWSFIL==="all"||n.kind===NEWSFIL);
+      const rel=n=>(n.teams||[]).some(t=>mine.has(t));
+      ns=[...ns.filter(rel),...ns.filter(n=>!rel(n))].slice(0,NEWSMORE?24:8);
+      if(!ns.length)return '<p class="muted small" style="padding:14px 16px">Nothing in this category yet — the feed refreshes hourly.</p>';
+      const ico={injury:"&#9888;",transfer:"&#8644;",manager:"&#9873;",suspension:"&#9940;"};
+      const col={injury:"var(--red)",transfer:"var(--blue)",manager:"var(--purple)",suspension:"var(--accent)"};
+      const ago=d=>{const m=Math.round((Date.now()-new Date(d).getTime())/60000);return m<60?m+"m":m<1440?Math.round(m/60)+"h":Math.round(m/1440)+"d";};
+      return ns.map(n=>`<div style="border-top:1px solid var(--border);padding:9px 16px;${rel(n)?"background:#101825":""}">
+        <div class="flex" style="gap:8px;align-items:flex-start">
+          <span style="color:${col[n.kind]||"var(--muted)"};font-size:13px;width:16px;text-align:center">${ico[n.kind]||"&#8226;"}</span>
+          <span style="flex:1;min-width:0">
+            <a href="${esc(n.link||"#")}" target="_blank" rel="noopener" style="color:var(--text);text-decoration:none;font-size:13.5px">${esc(n.headline)}</a>
+            <div class="flex" style="gap:6px;margin-top:3px">
+              ${(n.teams||[]).slice(0,3).map(t=>`<span style="font-size:11px;background:${mine.has(t)?"rgba(245,185,66,.15)":"#1b2432"};color:${mine.has(t)?"var(--accent)":"#5d6879"};padding:1px 8px;border-radius:20px">${esc(t)}</span>`).join("")}
+              <span style="font-size:11px;color:#4d5766">${esc(n.source||"")} · ${ago(n.published_at)} ago</span>
+              ${rel(n)?'<span style="font-size:11px;color:var(--accent)">· we have a play here</span>':""}
+            </div>
+          </span>
+        </div></div>`).join("");
+    })()}
+    ${(NEWS||[]).length>8?`<div style="border-top:1px solid var(--border);padding:8px 16px"><button class="btn ghost sm" onclick="NEWSMORE=!NEWSMORE;render()">${NEWSMORE?"show less":"show more"}</button></div>`:""}
   </div>
   <div class="panel"><div class="flex"><h2>How good am I, by bet type</h2>
     <span class="small muted right">${Object.values(S).reduce((a,o)=>a+o.t,0)} graded · paper + real</span></div>
