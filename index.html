@@ -452,8 +452,9 @@ async function logCombo(){
   const q=comboQuote(legs); if(!q)return;
   const pe=document.getElementById("cb_price"), se=document.getElementById("cb_stake");
   if(!pe){ COMBOFORM=true; render(); return; }
-  const price=+pe.value, stake=+se.value;
-  if(!price||!stake){toast("Enter price and stake",false);return;}
+  const mult=+pe.value, stake=+se.value;
+  if(!mult||mult<=1||!stake){toast("Enter stake and multiplier",false);return;}
+  const price=Math.round(100/mult);
   try{
     await api("bets_ledger",{method:"POST",body:{match:legs.map(p=>p.match).join(" + "),market:"combo",
       side:legs.map(p=>p.bet).join(" AND "),our_prob:+(q.prob*100).toFixed(0),price_cents:+price,stake:+stake}});
@@ -511,7 +512,7 @@ function comboPanel(){
       ${chipHtml("same legs separately: "+(q.singlesRoi>0?"+":"")+Math.round(q.singlesRoi*100)+"%","neutral")}
       <b style="color:${col}">${q.good?"✓ combo wins — take it":(q.prob<COMBO_MIN_HIT?"✗ hits too rarely ("+Math.round(q.prob*100)+"% — floor is 35%) — bet them separately":"✗ singles pay better — bet them separately")}</b></div>
     <p class="small" style="margin-top:8px;color:var(--muted)">${q.sameMatch?"Same match — correlation priced from the full scoreline grid, not naive multiplication.":"Different matches — one result can't drag the other down."} Stake is halved because combos lose more often.</p>
-    ${q.good?`<div class="flex" style="margin-top:8px;gap:8px">${COMBOFORM?`<span class="small muted">paid</span><input id="cb_price" type="number" value="${Math.round(q.price*100)}" style="width:64px;padding:4px 8px"><span class="small muted">¢ · stake $</span><input id="cb_stake" type="number" value="${q.stake||2}" style="width:64px;padding:4px 8px">`:""}<button class="btn sm" onclick="logCombo()">${COMBOFORM?"save combo to ledger":"Log this combo"}</button></div>`:""}
+    ${q.good?`<div class="flex" style="margin-top:8px;gap:8px">${COMBOFORM?`<span class="small muted">I bet $</span><input id="cb_stake" type="number" value="${q.stake||2}" style="width:64px;padding:4px 8px"><span class="small muted">at</span><input id="cb_price" type="number" step="0.01" value="${(1/q.price).toFixed(2)}" style="width:70px;padding:4px 8px"><span class="small muted">x</span>`:""}<button class="btn sm" onclick="logCombo()">${COMBOFORM?"save combo to ledger":"Log this combo"}</button></div>`:""}
   </div>`;
 }
 function renderBoard(){
@@ -541,9 +542,10 @@ function renderBoard(){
         ${p.our!=null&&!p.locked?`<button class="btn ghost sm" onclick="logBetFromBoard(${p._i})">${LOGFORM===p._i?"close":"log"}</button>`:""}
       </div>
       ${LOGFORM===p._i?`<div class="flex" style="margin:6px 0 0 26px;gap:8px;background:#0f1420;padding:8px 10px;border-radius:8px">
-        <span class="small muted">paid</span><input id="lb_price" type="number" value="${p.livePrice||p.maxPrice}" style="width:64px;padding:4px 8px"><span class="small muted">¢</span>
-        <span class="small muted">stake $</span><input id="lb_stake" type="number" value="${p.stake||10}" style="width:64px;padding:4px 8px">
-        <button class="btn sm" onclick="submitLogBet(${p._i})">save to ledger</button></div>`:""}
+        <span class="small muted">I bet $</span><input id="lb_stake" type="number" value="${p.stake||10}" style="width:64px;padding:4px 8px">
+        <span class="small muted">at</span><input id="lb_mult" type="number" step="0.01" value="${(100/(p.livePrice||p.maxPrice)).toFixed(2)}" style="width:70px;padding:4px 8px"><span class="small muted">x multiplier</span>
+        <span class="small muted" id="lb_pay"></span>
+        <button class="btn sm" onclick="submitLogBet(${p._i})">save</button></div>`:""}
       <p class="small muted" style="margin:3px 0 0 26px">${esc(p.why||p.note||"")}</p>`).join("")}
   </div>`).join("")}
   ${sug.length?`<div class="panel" style="margin-top:12px;border-color:var(--green)"><h2 style="color:var(--green)">Combos worth taking this week</h2>
@@ -792,8 +794,9 @@ let LOGFORM=null;
 function logBetFromBoard(i){ LOGFORM=(LOGFORM===i?null:i); render(); }
 async function submitLogBet(i){
   const p=(BOARD&&BOARD.plays||[])[i]; if(!p)return;
-  const price=+document.getElementById("lb_price").value, stake=+document.getElementById("lb_stake").value;
-  if(!price||!stake){toast("Enter price and stake",false);return;}
+  const stake=+document.getElementById("lb_stake").value, mult=+document.getElementById("lb_mult").value;
+  if(!stake||!mult||mult<=1){toast("Enter stake and multiplier (e.g. 1.75)",false);return;}
+  const price=Math.round(100/mult);
   try{
     await api("bets_ledger",{method:"POST",body:{match:p.match,market:p.type,side:p.bet,our_prob:p.our,price_cents:price,stake:stake}});
     LOGFORM=null; toast("Bet logged ✓ — see it in Predictions › Bet Ledger"); loadAll();
