@@ -280,6 +280,10 @@ async function buildBoard(force){
     const E=matchupEngine(A,B,true);
     if(!E){passed++;continue;}
     grids[f.id]=E.grid;
+    const PV={src:"board",generated:new Date().toISOString(),base:E.base,xg:E.gA+"-"+E.gB,totalG:E.totalG,
+      params:{base_xg:E.base,form:E.form?E.form.v:0,archetype:E.arch?E.arch.v:0,h2h_xg:E.h2h?E.h2h.v:0,
+        congestion:E.cong?E.cong.v:0,month_cycle:E.dos?E.dos.v:0,low_sample_blend:E.lowSample?1:0,
+        script:E.script?E.script.code:null}};
     const alerts=E.alerts||[];
     const lineupTag=alerts.length?[["LINEUP RISK: "+alerts.map(p=>p.name).join(", "),"danger"]]:[];
     const day=new Date(f.kickoff).toLocaleDateString([],{weekday:"short"});
@@ -306,7 +310,7 @@ async function buildBoard(force){
         const favStakes=favHome?stA:stB, oppStakes=favHome?stB:stA;
         const motPrem=favStakes.tag==="F"&&oppStakes.tag==="S";
         if(motPrem)tags.push(["MOTIVATION PREMIUM — extra margin","danger"]);
-        plays.push({match:A+" vs "+B,day,bet:wteam+" to win",our:wp,type:"winner",team:wteam,tags,motPrem,
+        plays.push({match:A+" vs "+B,day,bet:wteam+" to win",our:wp,type:"winner",team:wteam,tags,motPrem,_E:PV,
           fid:f.id,mkt:{k:"winner",home:favHome},locked:alerts.length>0,
           why:wteam+" are the stronger side here — the model expects roughly "+E.gA+"–"+E.gB+"."+(E.dos&&E.dos.notes.length?" "+E.dos.notes[0]:""),
           note:"engine "+E.gA+"–"+E.gB+" · most likely "+E.poisson.best});
@@ -318,24 +322,24 @@ async function buildBoard(force){
     if((E.script.code.startsWith("A SIEGE")||(trap&&trap[1]<0))&&noP>=42){
       plays.push({match:A+" vs "+B,day,bet:wteam===A?B+" or draw":A+" or draw",our:noP,type:"no",team:wteam,
         tags:[["NO / DRAW+","neutral"],[(E.script.code.startsWith("A")?"SCRIPT A SIEGE":"vs trap band"),"warning"],...(trap&&trap[1]<0?[trap[0]]:[]),...lineupTag],
-        fid:f.id,mkt:{k:"no",home:favHome},locked:alerts.length>0,
+        _E:PV,fid:f.id,mkt:{k:"no",home:favHome},locked:alerts.length>0,
         why:"The market overrates "+wteam+" here, and draws are common in this kind of game — you win unless "+wteam+" do.",
         note:"pays on "+(favHome?B:A)+" win OR draw"});
     }
     // 3) TOTALS
     const oP=E.poisson.o;
     if(oP>=58) plays.push({match:A+" vs "+B,day,bet:"Over 2.5 goals",our:Math.round(oP),type:"over",tags:[["TOTALS","neutral"],...lineupTag],
-      fid:f.id,mkt:{k:"over"},locked:alerts.length>0,
+      _E:PV,fid:f.id,mkt:{k:"over"},locked:alerts.length>0,
       why:"The model expects about "+E.totalG+" goals — both sides trade chances in this shape."+(E.script.lean.includes("Over")?" Game script agrees.":""),
       note:E.script.lean.includes("Over")?"script agrees: "+E.script.code:""});
     if(oP<=42) plays.push({match:A+" vs "+B,day,bet:"Under 2.5 goals",our:Math.round(100-oP),type:"under",tags:[["TOTALS","neutral"],...lineupTag],
-      fid:f.id,mkt:{k:"under"},locked:alerts.length>0,
+      _E:PV,fid:f.id,mkt:{k:"under"},locked:alerts.length>0,
       why:"The model expects only about "+E.totalG+" goals — a tight, low-event game."+(E.script.lean.includes("Under")?" Game script agrees.":""),
       note:E.script.lean.includes("Under")?"script agrees: "+E.script.code:""});
     // 3b) BOTH TEAMS TO SCORE — the best same-match combo partner for Over 2.5
     const btP=E.poisson.btts;
     if(btP>=58) plays.push({match:A+" vs "+B,day,bet:"Both teams to score",our:Math.round(btP),type:"btts",tags:[["GOALS","neutral"],...lineupTag],
-      fid:f.id,mkt:{k:"btts"},locked:alerts.length>0,
+      _E:PV,fid:f.id,mkt:{k:"btts"},locked:alerts.length>0,
       why:"Both defences leak in this shape — the model has both sides scoring in "+Math.round(btP)+" games out of 100.",
       note:""});
     // 4) LIVE conditional (shaky leads)
@@ -371,10 +375,12 @@ async function buildBoard(force){
   try{
     const rows=fixtures.map(f=>{
       const mine=plays.filter(p=>p.fid===f.id&&p.our!=null&&p.type!=="live");
+      const E2=grids[f.id]?plays.find(p=>p.fid===f.id&&p._E):null;
+      const EV=(plays.find(p=>p.fid===f.id)||{})._E||null;
       return {fixture_id:f.id,match:f.team_h_name+" vs "+f.team_a_name,kickoff:f.kickoff,mw,
         picks:mine.map(p=>({market:p.type,side:p.mkt&&p.mkt.home!=null?(p.mkt.home?"home":"away"):null,pick:p.bet,prob:p.our,max_price:p.maxPrice,why:p.why||""})),
         pass_reason:mine.length?null:"no edge ≥5pp found (or data too thin)",
-        engine:{generated:new Date().toISOString(),src:"board"}};
+        engine:EV||{generated:new Date().toISOString(),src:"board"}};
     });
     api("paper_picks?on_conflict=fixture_id",{method:"POST",headers:{Prefer:"resolution=ignore-duplicates"},body:rows}).catch(()=>{});
   }catch(e){}
@@ -787,6 +793,27 @@ function vEngine(){
     </div>
     ${p.analysis?`<div class="detail" style="margin-top:8px"><p class="small" style="margin:0">🧠 ${esc(p.analysis)}</p></div>`:""}
   </div>`;}).join(""):'<div class="panel"><p class="muted">No picks recorded yet — they generate automatically when the Bet Board scans a matchweek.</p></div>'}
+  ${(()=>{
+    const acts={};
+    for(const p of graded){
+      const par=(p.engine&&p.engine.params)||{};
+      for(const [k,v] of Object.entries(par)){
+        if(k==="script"||v===0||v==null)continue;
+        const a=acts[k]=acts[k]||{n:0,h:0,tot:0};
+        for(const o of (p.outcomes||[])){a.n++;if(o.result==="HIT")a.h++;}
+        a.tot++;
+      }
+    }
+    const reg=((DB.settings.engine_params||{}).registry)||[];
+    const rows=Object.entries(acts);
+    return `<div class="panel" style="margin-top:12px"><h2>Parameter attribution — which ingredients earn their weight</h2>
+    <p class="small muted" style="margin-bottom:8px">Every pick records which parameters pushed it. As results accumulate, each parameter's real-world record appears here. Verdicts unlock at 30 activations (whisper) and 100 (confident) — before that, everything is 'collecting'. Changes are proposed to you, never auto-applied.</p>
+    <table><tr><th>Parameter</th><th>Fired in</th><th>Picks graded</th><th>Hit when active</th><th>Status</th></tr>
+    ${reg.map(r=>{const a=acts[r.id];return `<tr><td><b class="small">${esc(r.name)}</b><br><span class="muted small">${esc(r.weight)}</span></td>
+      <td class="num">${a?a.tot+" matches":"—"}</td><td class="num">${a?a.n:"0"}</td>
+      <td class="num">${a&&a.n?Math.round(100*a.h/a.n)+"%":"—"}</td>
+      <td class="small ${a&&a.n>=30?"":"muted"}">${a&&a.n>=100?"CONFIDENT":a&&a.n>=30?"whisper":"collecting ("+(a?a.n:0)+"/30)"}</td></tr>`;}).join("")}
+    </table></div>`;})()}
   <p class="small muted" style="margin-top:10px">Grading and one-line analysis are automatic (hourly). Deeper per-match reviews and any engine tweaks happen in our sessions — proposals only, you approve.</p>`;
 }
 /* ---------- BET LEDGER ---------- */
