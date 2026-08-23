@@ -701,11 +701,11 @@ function vSimpleDashboard(){
       </div>`;}).join(""):'<p class="muted small" style="padding:12px">No edges on the board yet — it scans automatically as fixtures approach.</p>'}
     </div>
     <div>
-      <div class="panel" style="margin:0 0 10px"><div class="small muted">bankroll</div>
-        <div class="num" style="font-size:24px;font-weight:800">$${bank.toFixed(0)}</div>
+      <div class="panel" style="margin:0 0 10px;border-left:3px solid var(--green);border-radius:0 10px 10px 0"><div style="font-size:11px;letter-spacing:.06em;color:#5d6879">bankroll</div>
+        <div class="num" style="font-size:24px;font-weight:500;line-height:1.25">$${bank.toFixed(0)}</div>
         <div class="small ${pnl>=0?"pos":"neg"}">${pnl>=0?"+":""}$${pnl.toFixed(0)} · ${bank?((pnl/(bank-pnl||1))*100).toFixed(1):"0"}%</div>
         ${spark}</div>
-      <div class="panel" style="margin:0"><div class="small muted">riding now · $${riding.toFixed(0)}</div>
+      <div class="panel" style="margin:0;border-left:3px solid var(--blue);border-radius:0 10px 10px 0"><div style="font-size:11px;letter-spacing:.06em;color:#5d6879">riding now · $${riding.toFixed(0)}</div>
         ${open.length?open.slice(0,5).map(b=>`<div class="flex small" style="margin:3px 0"><span style="flex:1">${esc(b.side||"")}</span><span class="muted num">$${(+b.stake).toFixed(0)}</span></div>`).join(""):'<p class="small muted" style="margin:4px 0 0">Nothing open.</p>'}
       </div>
     </div>
