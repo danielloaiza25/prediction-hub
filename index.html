@@ -218,13 +218,20 @@ function plBanner(){
     .sort((a,b)=>new Date(a.kickoff)-new Date(b.kickoff));
   const chip=f=>{
     const live=fxLive(f), done=fxDone(f);
-    const sc=f.team_h_score==null?"":`<b style="color:var(--text)">${f.team_h_score}</b>-<b style="color:var(--text)">${f.team_a_score}</b>`;
-    const when=!done&&!live?`<span style="color:#4d5766">${f.kickoff?new Date(f.kickoff).toLocaleDateString([],{weekday:"short"})+" "+new Date(f.kickoff).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):""}</span>`:"";
-    return `<span style="background:#151d29;border-radius:20px;padding:6px 12px;font-size:12px;color:var(--muted);white-space:nowrap;display:inline-flex;gap:5px;align-items:center">
-      ${live?`<span style="color:var(--red);font-size:10px;letter-spacing:.05em">&#9679; live</span>`:""}
-      ${abbr(f.team_h_name)} ${sc||when} ${abbr(f.team_a_name)}</span>`;
+    const kt=f.kickoff?new Date(f.kickoff):null;
+    const day=kt?kt.toLocaleDateString([],{weekday:"short"}).toLowerCase():"";
+    const tm=kt?kt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",hour12:false}):"";
+    const head=live?`<span style="color:var(--red)">&#9679; live${f.minutes?" "+f.minutes+"'":""}</span>`
+      :done?`<span style="color:#4d5766">${day} ${tm} · ft</span>`
+      :`<span style="color:var(--blue)">${day} ${tm}</span>`;
+    const body=f.team_h_score==null
+      ? `${abbr(f.team_h_name)} <span style="color:#4d5766">v</span> ${abbr(f.team_a_name)}`
+      : `${abbr(f.team_h_name)} <b style="color:var(--text)">${f.team_h_score}</b> &#8212; <b style="color:var(--text)">${f.team_a_score}</b> ${abbr(f.team_a_name)}`;
+    return `<div style="background:#151d29;border-radius:10px;padding:8px 11px;min-width:0">
+      <div style="font-size:10.5px;letter-spacing:.05em;margin-bottom:3px;white-space:nowrap;overflow:hidden">${head}</div>
+      <div style="font-size:13px;color:${f.team_h_score==null?"var(--muted)":"#c3ccda"};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${body}</div></div>`;
   };
-  const shown=fx.slice(0,7), rest=fx.length-shown.length;
+  const shown=fx.slice(0,11), rest=fx.length-shown.length;
   return `<div class="panel" style="margin-top:0;padding:14px 16px">
     <div class="flex" style="align-items:center">
       <div class="flex" style="gap:10px;align-items:baseline">
@@ -235,8 +242,8 @@ function plBanner(){
       <div class="right small" style="text-align:right;color:#4d5766">synced ${s.last_sync?new Date(s.last_sync).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):"—"}
         <button class="btn ghost sm" onclick="syncPL(false)" style="margin-left:8px">&#8635;</button></div>
     </div>
-    ${fx.length?`<div class="flex" style="gap:6px;margin-top:11px">${shown.map(chip).join("")}
-      ${rest>0?`<span style="background:#151d29;border-radius:20px;padding:6px 12px;font-size:12px;color:#4d5766">+${rest}</span>`:""}</div>`:""}
+    ${fx.length?`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:7px;margin-top:11px">${shown.map(chip).join("")}
+      ${rest>0?`<div style="background:#151d29;border-radius:10px;padding:8px 11px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#4d5766">+${rest} more</div>`:""}</div>`:""}
   </div>`;
 }
 function plTable(){
@@ -702,14 +709,6 @@ function vSimpleDashboard(){
       <div style="flex:1;height:9px;background:#0b1119;border-radius:5px;overflow:hidden"><div style="width:${pct}%;height:9px;background:${col};border-radius:5px"></div></div>
       <span class="small num" style="width:82px;text-align:right">${o.t?pct+"%":"—"} <span class="muted" style="font-size:11px">${o.h}-${o.t-o.h}</span></span></div>`;
   };
-  const done=DB.plf.filter(f=>f.finished&&f.team_h_name&&f.team_a_name);
-  const maxEv=done.length?Math.max(...done.map(f=>+f.event||0)):0;
-  const now=tableCalc(done), prev=tableCalc(done.filter(f=>(+f.event||0)<maxEv));
-  const prevPos={}; prev.forEach((r,i)=>prevPos[r.team]=i+1);
-  const lastOf={}; for(const f of done.slice().sort((a,b)=>new Date(a.kickoff)-new Date(b.kickoff))){
-    lastOf[f.team_h_name]={r:f.team_h_score>f.team_a_score?"W":f.team_h_score<f.team_a_score?"L":"D",s:f.team_h_score+"-"+f.team_a_score};
-    lastOf[f.team_a_name]={r:f.team_a_score>f.team_h_score?"W":f.team_a_score<f.team_h_score?"L":"D",s:f.team_a_score+"-"+f.team_h_score};
-  }
   const angles=t=>{
     const d=(DOSS||{})[t]; if(!d)return `<p class="small muted" style="margin:6px 0 0">No dossier saved for ${esc(t)} yet.</p>`;
     const c=d.card||{}, rg=d.regime;
@@ -891,22 +890,7 @@ function vSimpleDashboard(){
     ${barRow("winner",S.winner)}${barRow("over/under",S.goals)}${barRow("both to score",S.btts)}${barRow("combos",S.combo)}
     <p class="small muted" style="margin:6px 0 0">Green beats the price you paid, red loses to it — the bar is measured against break-even, not 50%.</p>
   </div>
-  <div class="panel" style="padding:0;overflow:hidden">
-    <div class="flex" style="padding:10px 12px 6px"><h2 style="margin:0">Table</h2>
-      <span class="small muted right">arrows = movement since last matchweek · tap a club for its angles</span></div>
-    ${now.length?now.map((r,i)=>{
-      const pp=prevPos[r.team], mv=pp?pp-(i+1):0, lr=lastOf[r.team];
-      const open2=DASHTEAM===r.team;
-      return `<div style="border-top:1px solid var(--border);${open2?"background:#0b1119":""}">
-        <div class="flex rowbtn" style="padding:7px 12px;gap:8px;align-items:center;cursor:pointer" onclick="toggleDashTeam('${esc(r.team).replace(/'/g,"&#39;")}')">
-          <span class="num muted" style="width:22px">${i+1}</span>
-          <b style="flex:1">${esc(r.team)}</b>
-          <span style="width:34px;text-align:center" class="small">${mv>0?`<span class="pos">▲${mv}</span>`:mv<0?`<span class="neg">▼${-mv}</span>`:'<span class="muted">–</span>'}</span>
-          <span class="small" style="width:56px;text-align:right;color:${lr?(lr.r==="W"?"var(--green)":lr.r==="L"?"var(--red)":"inherit"):"inherit"}">${lr?lr.r+" "+lr.s:""}</span>
-          <span class="num" style="width:34px;text-align:right">${r.pts}</span></div>
-        ${open2?`<div style="padding:0 12px 10px">${angles(r.team)}</div>`:""}
-      </div>`;}).join(""):'<p class="muted small" style="padding:12px">No results yet this season.</p>'}
-  </div>`;
+  `;
 }
 async function quickLogCombo(ci){
   const c=((BOARD&&BOARD.suggested)||[])[ci]; if(!c)return;
