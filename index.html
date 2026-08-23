@@ -575,54 +575,150 @@ function openScanReport(fid){
   go("pltable");
 }
 function multFromMax(mp){return (100/mp).toFixed(2);}
+let DASHWHY=null, DASHTEAM=null;
+function toggleWhy(i){ DASHWHY=(DASHWHY===i?null:i); render(); }
+function toggleDashTeam(t){ DASHTEAM=(DASHTEAM===t?null:t); render(); }
+function tableCalc(fxs){
+  const t={};
+  for(const tm of DB.plt) t[tm.name]={team:tm.name,p:0,pts:0,gf:0,ga:0};
+  for(const f of fxs){ const h=t[f.team_h_name],a=t[f.team_a_name]; if(!h||!a)continue;
+    h.p++;a.p++;h.gf+=f.team_h_score;h.ga+=f.team_a_score;a.gf+=f.team_a_score;a.ga+=f.team_h_score;
+    if(f.team_h_score>f.team_a_score)h.pts+=3; else if(f.team_h_score<f.team_a_score)a.pts+=3; else {h.pts++;a.pts++;}
+  }
+  return Object.values(t).sort((x,y)=>y.pts-x.pts||(y.gf-y.ga)-(x.gf-x.ga)||y.gf-x.gf);
+}
+function typeStats(){
+  const S={winner:{h:0,t:0,ps:0,pn:0},goals:{h:0,t:0,ps:0,pn:0},btts:{h:0,t:0,ps:0,pn:0},combo:{h:0,t:0,ps:0,pn:0}};
+  const bucket=m=>{m=String(m||"").toLowerCase(); return m.indexOf("combo")>=0?"combo":m.indexOf("btts")>=0?"btts":(m.indexOf("over")>=0||m.indexOf("under")>=0||m.indexOf("goal")>=0)?"goals":"winner";};
+  for(const p of (PAPERS||[])){ if(!p.settled)continue;
+    for(const o of (p.outcomes||[])){ const k=bucket(o.market||o.pick); S[k].t++; if(o.result==="HIT")S[k].h++;
+      const pr=o.max_price||o.price; if(pr){S[k].ps+=pr;S[k].pn++;} } }
+  for(const b of (DB.ledger||[])){ if(b.result!=="win"&&b.result!=="lose")continue;
+    const k=bucket(b.market||b.side); S[k].t++; if(b.result==="win")S[k].h++;
+    if(b.price_cents){S[k].ps+=b.price_cents;S[k].pn++;} }
+  return S;
+}
+function multFromPrice(c){ return (100/c).toFixed(2); }
 function vSimpleDashboard(){
-  // Q1 feed items
-  const feed=[];
-  const al=DB.players.filter(p=>p.prs>=8&&p.status&&p.status!=="fit"&&p.status!=="unavailable");
-  for(const p of al.slice(0,3))feed.push({c:"danger",icon:"⚠",t:`<b>${esc(p.name)}</b> (${esc(p.team)}, PRS ${p.prs}) is ${esc(p.status)} — any ${esc(p.team)} bet waits for lineups`});
-  const recent=(PAPERS||[]).filter(p=>p.settled).slice(0,3);
-  for(const p of recent){const o=p.outcomes||[];const nH=o.filter(x=>x.result==="HIT").length;
-    feed.push({c:o.length?(nH===o.length?"success":nH?"warn":"danger"):"muted",icon:"🧠",t:`<b>Graded:</b> ${esc(p.match)} ${esc(p.score||"")} — ${o.length?nH+" of "+o.length+" engine picks hit":"engine passed"}`});}
-  const settledBets=(DB.ledger||[]).filter(b=>b.result&&(b.notes||"").includes("auto-settled")).slice(0,2);
-  for(const b of settledBets)feed.push({c:b.result==="win"?"success":"danger",icon:"💵",t:`<b>Your bet settled:</b> ${esc(b.side)} — ${b.result==="win"?"won +$"+(b.payout-b.stake).toFixed(0):"lost $"+b.stake}`});
-  // Q2 picks
-  const ps=(BOARD&&BOARD.plays||[]).filter(p=>p.our!=null&&p.type!=="live").sort((a,b)=>(b.ev??-99)-(a.ev??-99));
-  const top=ps.slice(0,5);
-  const s2=BOARD&&BOARD.suggested&&BOARD.suggested[0];
-  // Q3
-  const graded=(PAPERS||[]).filter(p=>p.settled&&(p.outcomes||[]).length);
-  const allO=graded.flatMap(p=>p.outcomes);const hits=allO.filter(o=>o.result==="HIT").length;
-  const led=(DB.ledger||[]).filter(b=>b.result);
-  const pnl=led.reduce((a,b)=>a+((b.payout||0)-b.stake),0);
-  return plBanner()+`
-  ${(()=>{ if(!BOARD&&!BOARDREQ&&boardKey()){BOARDREQ=true;setTimeout(()=>refreshBoard(false),50);} if(PAPERS===null){PAPERS=[];api("paper_picks?select=*&order=kickoff.desc&limit=30").then(r=>{PAPERS=r;if(TAB==="dashboard")render();}).catch(()=>{});} return ""; })()}
-  <div class="panel"><h2>What's happening</h2>
-    ${feed.length?feed.map(f=>`<div class="detail" style="margin:6px 0;padding:9px 12px;border-left:3px solid ${f.c==="danger"?"var(--red)":f.c==="success"?"var(--green)":f.c==="warn"?"var(--accent)":"var(--border)"};border-radius:0 10px 10px 0"><span class="small">${f.icon} ${f.t}</span></div>`).join(""):'<p class="muted small">Quiet. Next fixtures load below.</p>'}
-  </div>
-  <div class="panel" style="border-color:var(--accent)"><div class="flex"><h2>What the engine likes</h2><button class="btn ghost sm right" onclick="refreshBoard(true)">↻</button></div>
-    ${top.length?top.map(p=>`<div class="detail" style="margin:8px 0">
-      <div class="flex"><b>${esc(p.match)}</b><span class="muted small">${esc(p.day||"")}</span>
-        <span class="small" style="color:var(--blue);font-weight:700">${esc(p.bet)}</span>
-        <b class="num" style="margin-left:auto;font-size:16px">${p.our}%</b></div>
-      <div class="flex small" style="margin-top:4px">
-        <span class="tag ${p.locked?"watch":"hit"}">${p.locked?"wait for lineups":"worth $"+(p.stake||3)+" at "+multFromMax(p.maxPrice)+"x or better"}</span>
-        ${p.our!=null&&!p.locked?`<button class="btn ghost sm right" onclick="logBetFromBoard(${p._i})">${LOGFORM===p._i?"close":"I bet this → log"}</button>`:""}</div>
-      ${LOGFORM===p._i?`<div class="flex" style="margin:6px 0 0;gap:8px;background:#0f1420;padding:8px 10px;border-radius:8px">
-        <span class="small muted">I bet $</span><input id="lb_stake" type="number" value="${p.stake||10}" style="width:64px;padding:4px 8px">
-        <span class="small muted">at</span><input id="lb_mult" type="number" step="0.01" value="${multFromMax(p.maxPrice)}" style="width:70px;padding:4px 8px"><span class="small muted">x</span>
-        <button class="btn sm" onclick="submitLogBet(${p._i})">save</button></div>`:""}
-      <p class="small muted" style="margin:4px 0 0">${esc(p.why||p.note||"")}</p>
-    </div>`).join(""):'<p class="muted small">No edges on the board yet — it scans automatically when fixtures approach.</p>'}
-    ${s2?`<div class="detail" style="margin-top:8px;border:1px solid var(--green)"><span class="small"><b style="color:var(--green)">Combo worth taking:</b> ${s2.legs.map(i=>esc((BOARD.plays[i]||{}).bet||"")).join(" + ")} — hits ${s2.prob}/100, $${s2.stake||2} pays $${s2.payout||"?"}</span></div>`:""}
-    ${ps.length>5?`<p class="small muted" style="margin-top:6px">${ps.length-5} more on the full board (expert view)</p>`:""}
-  </div>
-  <div class="panel"><h2>How are we doing</h2>
-    <div class="flex small" style="gap:18px">
-      <span>Engine picks: <b class="num">${allO.length?hits+"/"+allO.length+" ("+Math.round(100*hits/allO.length)+"%)":"—"}</b></span>
-      <span>Your money: <b class="num ${pnl>=0?"pos":"neg"}">${pnl>=0?"+":""}$${pnl.toFixed(0)}</b> <span class="muted">(${led.length} settled)</span></span>
-      <button class="btn ghost sm right" onclick="go('engine')">picks & lessons →</button>
+  const boot=(()=>{
+    if(!BOARD&&!BOARDREQ&&boardKey()){BOARDREQ=true;setTimeout(()=>refreshBoard(false),50);}
+    if(PAPERS===null){PAPERS=[];api("paper_picks?select=*&order=kickoff.desc&limit=60").then(r=>{PAPERS=r;if(TAB==="dashboard")render();}).catch(()=>{});}
+    if(!DOSS){DOSS={};ensureDossiers().then(()=>{if(TAB==="dashboard")render();}).catch(()=>{});}
+    return "";
+  })();
+  const L=DB.ledger||[];
+  const settled=L.filter(b=>b.result==="win"||b.result==="lose");
+  const pnl=settled.reduce((a,b)=>a+((+b.payout||0)-(+b.stake||0)),0);
+  const open=L.filter(b=>!b.result);
+  const riding=open.reduce((a,b)=>a+(+b.stake||0),0);
+  const bank=(+((DB.settings||{}).bankroll)||1000)+pnl;
+  const alerts=DB.players.filter(p=>p.prs>=8&&p.status&&p.status!=="fit"&&p.status!=="unavailable").slice(0,2);
+  const plays=(BOARD&&BOARD.plays||[]).filter(p=>p.our!=null&&p.type!=="live").sort((a,b)=>(b.ev??-99)-(a.ev??-99)).slice(0,10);
+  const isLogged=p=>open.some(b=>b.match===p.match&&b.side===p.bet);
+  let cum=0; const pts=settled.slice().sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at))).map(b=>{cum+=((+b.payout||0)-(+b.stake||0));return cum;});
+  const spark=(()=>{ if(pts.length<2)return "";
+    const mx=Math.max(...pts,0),mn=Math.min(...pts,0),rg=(mx-mn)||1;
+    const d=pts.map((v,i)=>`${(i/(pts.length-1)*150).toFixed(1)},${(30-((v-mn)/rg)*26).toFixed(1)}`).join(" ");
+    return `<svg viewBox="0 0 150 32" style="width:100%;height:32px"><polyline points="${d}" fill="none" stroke="${cum>=0?"var(--green)":"var(--red)"}" stroke-width="2"/></svg>`; })();
+  const S=typeStats();
+  const barRow=(label,o)=>{
+    const pct=o.t?Math.round(100*o.h/o.t):0;
+    const be=o.pn?Math.round(o.ps/o.pn):52;
+    const col=!o.t?"var(--border)":pct>=be+3?"var(--green)":pct<=be-3?"var(--red)":"var(--muted)";
+    return `<div class="flex" style="gap:8px;margin-bottom:6px;align-items:center">
+      <span class="small" style="width:88px">${label}</span>
+      <div style="flex:1;height:9px;background:#0f1420;border-radius:5px;overflow:hidden"><div style="width:${pct}%;height:9px;background:${col};border-radius:5px"></div></div>
+      <span class="small num" style="width:82px;text-align:right">${o.t?pct+"%":"—"} <span class="muted" style="font-size:11px">${o.h}-${o.t-o.h}</span></span></div>`;
+  };
+  const done=DB.plf.filter(f=>f.finished&&f.team_h_name&&f.team_a_name);
+  const maxEv=done.length?Math.max(...done.map(f=>+f.event||0)):0;
+  const now=tableCalc(done), prev=tableCalc(done.filter(f=>(+f.event||0)<maxEv));
+  const prevPos={}; prev.forEach((r,i)=>prevPos[r.team]=i+1);
+  const lastOf={}; for(const f of done.slice().sort((a,b)=>new Date(a.kickoff)-new Date(b.kickoff))){
+    lastOf[f.team_h_name]={r:f.team_h_score>f.team_a_score?"W":f.team_h_score<f.team_a_score?"L":"D",s:f.team_h_score+"-"+f.team_a_score};
+    lastOf[f.team_a_name]={r:f.team_a_score>f.team_h_score?"W":f.team_a_score<f.team_h_score?"L":"D",s:f.team_a_score+"-"+f.team_h_score};
+  }
+  const angles=t=>{
+    const d=(DOSS||{})[t]; if(!d)return `<p class="small muted" style="margin:6px 0 0">No dossier saved for ${esc(t)} yet.</p>`;
+    const c=d.card||{}, rg=d.regime;
+    const line=(k,col,arr)=>(arr&&arr.length)?`<div class="small" style="margin:3px 0"><span style="color:${col};font-weight:700">${k}</span> · ${arr.slice(0,3).map(esc).join(" · ")}</div>`:"";
+    return `${rg?`<div class="flex" style="gap:6px;flex-wrap:wrap;margin:6px 0 4px">
+        ${rg.shave?`<span class="tag miss">regime ${esc(String(rg.shave))}</span>`:""}
+        ${rg.manager?`<span class="tag pend">${esc(rg.manager)}</span>`:""}
+        ${rg.uncertainty?`<span class="tag watch">uncertainty ${esc(rg.uncertainty)}</span>`:""}</div>`:""}
+      ${line("back","var(--green)",c.back)}${line("fade","var(--red)",c.fade)}${line("never","var(--muted)",c.never)}${line("watch","var(--accent)",c.watch)}
+      <button class="btn ghost sm" style="margin-top:6px" onclick="event.stopPropagation();openProfile('${esc(t).replace(/'/g,"&#39;")}')">full profile →</button>`;
+  };
+  return plBanner()+boot+`
+  ${alerts.length?`<div class="panel" style="margin-top:10px;border-color:var(--red);padding:8px 12px">
+    ${alerts.map(p=>`<span class="small">⚠ <b>${esc(p.name)}</b> (${esc(p.team)}, PRS ${p.prs}) ${esc(p.status)} — wait for lineups before betting ${esc(p.team)}</span>`).join("<br>")}</div>`:""}
+  <div class="grid" style="grid-template-columns:1.62fr 1fr;gap:12px;margin-top:10px;align-items:start">
+    <div class="panel" style="margin:0;padding:0;overflow:hidden">
+      <div class="flex" style="padding:10px 12px 6px"><h2 style="margin:0">Plays this matchday</h2>
+        <button class="btn ghost sm right" onclick="refreshBoard(true)">↻</button></div>
+      <div class="flex small muted" style="padding:4px 12px;border-bottom:1px solid var(--border)">
+        <span style="flex:1">play</span><span style="width:44px;text-align:right">hit</span>
+        <span style="width:46px;text-align:right">odds</span><span style="width:120px;text-align:right">my bet</span></div>
+      ${plays.length?plays.map(p=>{
+        const lg=isLogged(p);
+        return `<div style="border-bottom:1px solid var(--border)">
+        <div class="flex" style="padding:7px 12px;gap:6px;align-items:center">
+          <span style="flex:1;min-width:0"><b>${esc(p.bet)}</b> <span class="muted small">${esc(p.match)}</span>
+            ${p.why||p.note?`<span class="rowbtn" style="cursor:pointer;color:var(--accent)" onclick="toggleWhy(${p._i})">&#9432;</span>`:""}</span>
+          <b class="num" style="width:44px;text-align:right;color:${p.our>=60?"var(--green)":"inherit"}">${p.our}%</b>
+          <span class="num small muted" style="width:46px;text-align:right">${multFromMax(p.maxPrice)}x</span>
+          ${lg?`<span class="small" style="width:120px;text-align:right;color:var(--green)">✓ logged</span>`
+            :p.locked?`<span class="small" style="width:120px;text-align:right"><span class="tag watch">lineups</span></span>`
+            :`<span style="width:120px;text-align:right;white-space:nowrap">
+              <input id="dv_${p._i}" type="number" placeholder="${p.stake||10}" style="width:52px;padding:3px 6px;text-align:right">
+              <input id="dm_${p._i}" type="number" step="0.01" value="${multFromMax(p.maxPrice)}" style="width:52px;padding:3px 6px;text-align:right">
+              <button class="btn sm" style="padding:3px 8px" onclick="quickLog(${p._i})">log</button></span>`}
+        </div>
+        ${DASHWHY===p._i?`<div style="padding:0 12px 9px"><p class="small" style="margin:0;color:var(--accent)">${esc(p.why||p.note||"")} · suggested $${p.stake||10} (quarter-kelly)</p></div>`:""}
+      </div>`;}).join(""):'<p class="muted small" style="padding:12px">No edges on the board yet — it scans automatically as fixtures approach.</p>'}
     </div>
+    <div>
+      <div class="panel" style="margin:0 0 10px"><div class="small muted">bankroll</div>
+        <div class="num" style="font-size:24px;font-weight:800">$${bank.toFixed(0)}</div>
+        <div class="small ${pnl>=0?"pos":"neg"}">${pnl>=0?"+":""}$${pnl.toFixed(0)} · ${bank?((pnl/(bank-pnl||1))*100).toFixed(1):"0"}%</div>
+        ${spark}</div>
+      <div class="panel" style="margin:0"><div class="small muted">riding now · $${riding.toFixed(0)}</div>
+        ${open.length?open.slice(0,5).map(b=>`<div class="flex small" style="margin:3px 0"><span style="flex:1">${esc(b.side||"")}</span><span class="muted num">$${(+b.stake).toFixed(0)}</span></div>`).join(""):'<p class="small muted" style="margin:4px 0 0">Nothing open.</p>'}
+      </div>
+    </div>
+  </div>
+  <div class="panel"><div class="flex"><h2>How good am I, by bet type</h2>
+    <span class="small muted right">${Object.values(S).reduce((a,o)=>a+o.t,0)} graded · paper + real</span></div>
+    ${barRow("winner",S.winner)}${barRow("over/under",S.goals)}${barRow("both to score",S.btts)}${barRow("combos",S.combo)}
+    <p class="small muted" style="margin:6px 0 0">Green beats the price you paid, red loses to it — the bar is measured against break-even, not 50%.</p>
+  </div>
+  <div class="panel" style="padding:0;overflow:hidden">
+    <div class="flex" style="padding:10px 12px 6px"><h2 style="margin:0">Table</h2>
+      <span class="small muted right">arrows = movement since last matchweek · tap a club for its angles</span></div>
+    ${now.length?now.map((r,i)=>{
+      const pp=prevPos[r.team], mv=pp?pp-(i+1):0, lr=lastOf[r.team];
+      const open2=DASHTEAM===r.team;
+      return `<div style="border-top:1px solid var(--border);${open2?"background:#0f1420":""}">
+        <div class="flex rowbtn" style="padding:7px 12px;gap:8px;align-items:center;cursor:pointer" onclick="toggleDashTeam('${esc(r.team).replace(/'/g,"&#39;")}')">
+          <span class="num muted" style="width:22px">${i+1}</span>
+          <b style="flex:1">${esc(r.team)}</b>
+          <span style="width:34px;text-align:center" class="small">${mv>0?`<span class="pos">▲${mv}</span>`:mv<0?`<span class="neg">▼${-mv}</span>`:'<span class="muted">–</span>'}</span>
+          <span class="small" style="width:56px;text-align:right;color:${lr?(lr.r==="W"?"var(--green)":lr.r==="L"?"var(--red)":"inherit"):"inherit"}">${lr?lr.r+" "+lr.s:""}</span>
+          <span class="num" style="width:34px;text-align:right">${r.pts}</span></div>
+        ${open2?`<div style="padding:0 12px 10px">${angles(r.team)}</div>`:""}
+      </div>`;}).join(""):'<p class="muted small" style="padding:12px">No results yet this season.</p>'}
   </div>`;
+}
+async function quickLog(i){
+  const p=(BOARD&&BOARD.plays||[])[i]; if(!p)return;
+  const sv=document.getElementById("dv_"+i), mv=document.getElementById("dm_"+i);
+  const stake=+(sv&&sv.value), mult=+(mv&&mv.value);
+  if(!stake||stake<=0){toast("Type how much you bet first",false);return;}
+  if(!mult||mult<=1){toast("Multiplier must be above 1 (e.g. 1.75)",false);return;}
+  try{
+    await api("bets_ledger",{method:"POST",body:{match:p.match,market:p.type,side:p.bet,our_prob:p.our,price_cents:Math.round(100/mult),stake:stake}});
+    toast("Logged $"+stake+" at "+mult+"x ✓"); loadAll();
+  }catch(e){toast(e.message,false)}
 }
 function vDashboard(){
   if(!EXPERT)return vSimpleDashboard();
