@@ -598,8 +598,8 @@ function openScanReport(fid){
   go("pltable");
 }
 function multFromMax(mp){return (100/mp).toFixed(2);}
-let DASHWHY=null, DASHTEAM=null, NEWS=null, NEWSFIL="all", NEWSMORE=false;
-function setNewsFil(k){ NEWSFIL=k; render(); }
+let DASHWHY=null, DASHTEAM=null, DNEWS=null, DNEWSFIL="all", DNEWSMORE=false;
+function setNewsFil(k){ DNEWSFIL=k; render(); }
 function toggleWhy(i){ DASHWHY=(DASHWHY===i?null:i); render(); }
 function toggleDashTeam(t){ DASHTEAM=(DASHTEAM===t?null:t); render(); }
 function tableCalc(fxs){
@@ -725,18 +725,18 @@ function vSimpleDashboard(){
     </div>`;}).join(""):'<p class="muted small" style="padding:14px 16px">No edges on the board yet — it scans automatically as fixtures approach.</p>'}
   </div>
   </div>
-  ${(()=>{ if(NEWS===null){NEWS=[];api("news_items?select=*&order=published_at.desc&limit=60").then(r=>{NEWS=r;if(TAB==="dashboard")render();}).catch(()=>{});} return ""; })()}
+  ${(()=>{ if(DNEWS===null){DNEWS=[];api("news_items?select=*&order=published_at.desc&limit=60").then(r=>{DNEWS=r;if(TAB==="dashboard")render();}).catch(()=>{});} return ""; })()}
   <div class="panel" style="padding:0;overflow:hidden">
     <div class="flex" style="padding:13px 16px 8px"><h2 style="margin:0;font-size:16px">News</h2>
-      <span class="small" style="color:#5d6879">${NEWSFIL==="all"?"everything":NEWSFIL}</span>
+      <span class="small" style="color:#5d6879">${DNEWSFIL==="all"?"everything":DNEWSFIL}</span>
       <span class="right flex" style="gap:4px">
-        ${["all","injury","transfer","manager","suspension"].map(k=>`<button class="btn ghost sm" style="padding:3px 9px;${NEWSFIL===k?"border-color:var(--accent);color:var(--accent)":""}" onclick="setNewsFil('${k}')">${k==="all"?"all":k}</button>`).join("")}
+        ${["all","injury","transfer","manager","suspension"].map(k=>`<button class="btn ghost sm" style="padding:3px 9px;${DNEWSFIL===k?"border-color:var(--accent);color:var(--accent)":""}" onclick="setNewsFil('${k}')">${k==="all"?"all":k}</button>`).join("")}
       </span></div>
     ${(()=>{
       const mine=new Set([...(BOARD&&BOARD.plays||[]).flatMap(p=>String(p.match||"").split(" vs ")),...(DB.ledger||[]).filter(b=>!b.result).flatMap(b=>String(b.match||"").split(" vs "))].map(s=>s.trim()).filter(Boolean));
-      let ns=(NEWS||[]).filter(n=>NEWSFIL==="all"||n.kind===NEWSFIL);
+      let ns=(DNEWS||[]).filter(n=>DNEWSFIL==="all"||n.kind===DNEWSFIL);
       const rel=n=>(n.teams||[]).some(t=>mine.has(t));
-      ns=[...ns.filter(rel),...ns.filter(n=>!rel(n))].slice(0,NEWSMORE?24:8);
+      ns=[...ns.filter(rel),...ns.filter(n=>!rel(n))].slice(0,DNEWSMORE?24:8);
       if(!ns.length)return '<p class="muted small" style="padding:14px 16px">Nothing in this category yet — the feed refreshes hourly.</p>';
       const ico={injury:"&#9888;",transfer:"&#8644;",manager:"&#9873;",suspension:"&#9940;"};
       const col={injury:"var(--red)",transfer:"var(--blue)",manager:"var(--purple)",suspension:"var(--accent)"};
@@ -754,7 +754,7 @@ function vSimpleDashboard(){
           </span>
         </div></div>`).join("");
     })()}
-    ${(NEWS||[]).length>8?`<div style="border-top:1px solid var(--border);padding:8px 16px"><button class="btn ghost sm" onclick="NEWSMORE=!NEWSMORE;render()">${NEWSMORE?"show less":"show more"}</button></div>`:""}
+    ${(DNEWS||[]).length>8?`<div style="border-top:1px solid var(--border);padding:8px 16px"><button class="btn ghost sm" onclick="DNEWSMORE=!DNEWSMORE;render()">${DNEWSMORE?"show less":"show more"}</button></div>`:""}
   </div>
   <div class="panel"><div class="flex"><h2>How good am I, by bet type</h2>
     <span class="small muted right">${Object.values(S).reduce((a,o)=>a+o.t,0)} graded · paper + real</span></div>
