@@ -597,8 +597,55 @@ function openScanReport(fid){
   profileTeam=f.team_h_name; h2hOpp=f.team_a_name; h2hVenue="home";
   go("pltable");
 }
+const VERD_EDGE=4, VERD_FLOOR=50, VERD_COMBO_FLOOR=35;
+function verdictFor(p){
+  const bl=[]; let yes=true;
+  const imp=p.maxPrice, edge=p.our-imp;
+  if(p.locked){yes=false;bl.push("a PRS 8+ player is in doubt — hard rule 2 says wait for confirmed lineups");}
+  if(edge<VERD_EDGE){yes=false;bl.push("edge is only "+edge.toFixed(1)+"pp over the price we can pay ("+imp+"c) — under the "+VERD_EDGE+"pp floor");}
+  if(p.our<VERD_FLOOR){yes=false;bl.push("hit rate "+p.our+"% is below the "+VERD_FLOOR+"% floor for a single");}
+  const E=p._E||{};
+  if(E.lowSample){bl.push("early-season blend still active — ratings are part last-season");}
+  const rs=(E.params&&E.params.regime_shave)||0;
+  if(rs<=-15){yes=false;bl.push("regime shave "+rs+" — the ratings describe a squad that no longer exists");}
+  else if(rs<0)bl.push("regime shave "+rs+" already applied");
+  const drivers=[];
+  if(E.base!=null)drivers.push("base xG rating "+(typeof E.base==="number"?E.base.toFixed(2):E.base));
+  if(E.form&&E.form.v)drivers.push("form "+(E.form.v>0?"+":"")+E.form.v.toFixed(1)+"pp");
+  if(E.arch&&E.arch.v)drivers.push("style matchup "+(E.arch.v>0?"+":"")+E.arch.v.toFixed(1)+"pp");
+  if(E.h2h&&E.h2h.v)drivers.push("h2h xG "+(E.h2h.v>0?"+":"")+E.h2h.v.toFixed(1)+"pp");
+  if(E.cong&&E.cong.v)drivers.push("rest/congestion "+(E.cong.v>0?"+":"")+E.cong.v.toFixed(1)+"pp");
+  if(E.dos&&E.dos.v)drivers.push("dossier month cycle "+(E.dos.v>0?"+":"")+E.dos.v.toFixed(1)+"pp");
+  const reasoning=(yes
+    ?"YES — we make it "+p.our+"% and can pay up to "+imp+"c, an edge of "+edge.toFixed(1)+"pp. "
+    :"NO — ")+(yes?"":bl[0]+". ")
+    +(drivers.length?"What drove the number: "+drivers.join(", ")+". ":"")
+    +(p.why||p.note||"")
+    +(yes?" Flip me: confirmed absence of a PRS 8+ starter, or the price moving above "+imp+"c.":" Flip me: price drifting to "+(Math.round(p.our-VERD_EDGE))+"c or better"+(p.locked?", plus lineups confirming the doubtful player starts":"")+".");
+  return {yes,edge:+edge.toFixed(1),blockers:bl,reasoning:reasoning.trim()};
+}
+function comboVerdict(c,legs){
+  const bl=[]; let yes=true;
+  if(c.prob<VERD_COMBO_FLOOR){yes=false;bl.push("joint hit rate "+c.prob+"% is under the "+VERD_COMBO_FLOOR+"% floor you set");}
+  if(c.roi<=c.singles){yes=false;bl.push("ROI +"+c.roi+"% does not clearly beat betting the legs separately (+"+c.singles+"%)");}
+  if(legs.some(p=>p.locked)){yes=false;bl.push("a leg is waiting on lineups");}
+  const reasoning=(yes?"YES — ":"NO — ")
+    +(yes?"":bl[0]+". ")
+    +"Joint probability "+c.prob+"% priced as a "+legs.length+"-leg parlay, ROI +"+c.roi+"% against +"+c.singles+"% for the same legs bet singly"
+    +(c.sameMatch?". Legs share a match, so the joint number is taken off the scoreline grid rather than multiplied — correlation is already accounted for":". Legs are independent matches, so probabilities multiply")
+    +". Legs: "+legs.map(p=>p.bet+" ("+p.our+"%)").join(" + ")
+    +(yes?". Flip me: any leg losing its lineup certainty, or the quoted price coming back worse than "+(c.stake&&c.payout?("$"+c.stake+" paying $"+c.payout):"quoted")+".":"");
+  return {yes,blockers:bl,reasoning};
+}
+let VERDSENT={};
+function recordVerdicts(rows){
+  const mw=(DB.plstate&&DB.plstate.current_gw)||0;
+  const fresh=rows.filter(r=>{const k=mw+"|"+r.match+"|"+r.bet;if(VERDSENT[k])return false;VERDSENT[k]=1;return true;});
+  if(!fresh.length)return;
+  api("verdicts?on_conflict=mw,match,bet",{method:"POST",headers:{Prefer:"resolution=ignore-duplicates"},body:fresh}).catch(()=>{});
+}
 function multFromMax(mp){return (100/mp).toFixed(2);}
-let DASHWHY=null, DASHTEAM=null, DNEWS=null, DNEWSFIL="all", DNEWSMORE=false;
+let VERDS=null, VMW=null, DASHWHY=null, DASHTEAM=null, DNEWS=null, DNEWSFIL="all", DNEWSMORE=false;
 function setNewsFil(k){ DNEWSFIL=k; render(); }
 function toggleWhy(i){ DASHWHY=(DASHWHY===i?null:i); render(); }
 function toggleDashTeam(t){ DASHTEAM=(DASHTEAM===t?null:t); render(); }
@@ -699,31 +746,75 @@ function vSimpleDashboard(){
   </div>
   <div class="panel" style="padding:0;overflow:hidden">
     <div class="flex" style="padding:13px 16px 8px"><h2 style="margin:0;font-size:16px">Plays this matchday</h2>
-      <span class="small right" style="color:#5d6879">tap the mark for the reasoning</span>
+      <span class="small right" style="color:#5d6879">tap my call for the reasoning</span>
       <button class="btn ghost sm" onclick="refreshBoard(true)">&#8635;</button></div>
     <div class="flex small" style="padding:5px 16px;border-bottom:1px solid var(--border);color:#5d6879;gap:6px">
-      <span style="flex:1">play</span><span style="width:60px;text-align:right">hit</span>
-      <span style="width:60px;text-align:right">odds</span><span style="width:200px;text-align:right">my bet</span></div>
-    ${plays.length?plays.map(p=>{
-      const lg=isLogged(p);
-      return `<div style="border-bottom:1px solid var(--border)">
-      <div class="flex" style="padding:11px 16px;gap:6px;align-items:center">
-        <span style="flex:1;min-width:0;font-size:14.5px"><b>${esc(p.bet)}</b> <span class="muted" style="font-size:13px">${esc(p.match)}</span>
-          ${p.why||p.note?`<span class="rowbtn" style="cursor:pointer;color:var(--accent);margin-left:4px" onclick="toggleWhy(${p._i})">&#9432;</span>`:""}</span>
-        <b class="num" style="width:60px;text-align:right;font-size:17px;color:${p.our>=60?"var(--green)":"inherit"}">${p.our}%</b>
-        <span class="num" style="width:60px;text-align:right;color:var(--muted);font-size:13px">${multFromMax(p.maxPrice)}x</span>
-        ${lg?`<span style="width:200px;text-align:right;color:var(--green);font-size:13px">&#10003; logged</span>`
-          :p.locked?`<span style="width:200px;text-align:right"><span class="tag watch">wait for lineups</span></span>`
-          :`<span style="width:200px;text-align:right;white-space:nowrap">
-            <span class="muted" style="font-size:12px">$</span>
-            <input id="dv_${p._i}" type="number" placeholder="${p.stake||10}" style="width:62px;padding:5px 8px;text-align:right;font-size:13px">
-            <input id="dm_${p._i}" type="number" step="0.01" value="${multFromMax(p.maxPrice)}" style="width:62px;padding:5px 8px;text-align:right;font-size:13px">
-            <span class="muted" style="font-size:12px">x</span>
-            <button class="btn sm" style="padding:5px 11px" onclick="quickLog(${p._i})">log</button></span>`}
-      </div>
-      ${DASHWHY===p._i?`<div style="padding:0 16px 11px"><p class="small" style="margin:0;color:var(--accent)">${esc(p.why||p.note||"")} · suggested $${p.stake||10} (quarter-kelly)</p></div>`:""}
-    </div>`;}).join(""):'<p class="muted small" style="padding:14px 16px">No edges on the board yet — it scans automatically as fixtures approach.</p>'}
-  </div>
+      <span style="flex:1">play</span><span style="width:58px;text-align:right">hit</span>
+      <span style="width:52px;text-align:right">odds</span><span style="width:64px;text-align:center">my call</span>
+      <span style="width:196px;text-align:right">my bet</span></div>
+    ${(()=>{
+      const rows=[];
+      const recs=[];
+      const mw=(DB.plstate&&DB.plstate.current_gw)||0;
+      for(const p of plays){
+        const v=verdictFor(p), lg=isLogged(p);
+        recs.push({mw,match:p.match,bet:p.bet,market:p.type,kind:"single",our_prob:p.our,price_cents:p.maxPrice,
+          edge_pp:v.edge,verdict:v.yes?"YES":"NO",reasoning:v.reasoning,blockers:v.blockers,
+          params:(p._E&&p._E.params)||null,fixture_id:p.fid||null,kickoff:p.kick||null,season:(DB.plstate&&DB.plstate.season)||null});
+        rows.push(`<div style="border-bottom:1px solid var(--border)">
+          <div class="flex" style="padding:11px 16px;gap:6px;align-items:center">
+            <span style="flex:1;min-width:0;font-size:14.5px"><b>${esc(p.bet)}</b> <span class="muted" style="font-size:13px">${esc(p.match)}</span></span>
+            <b class="num" style="width:58px;text-align:right;font-size:17px;color:${p.our>=60?"var(--green)":"inherit"}">${p.our}%</b>
+            <span class="num" style="width:52px;text-align:right;color:var(--muted);font-size:13px">${multFromMax(p.maxPrice)}x</span>
+            <span style="width:64px;text-align:center"><button onclick="toggleWhy(${p._i})" style="cursor:pointer;border:none;border-radius:20px;padding:3px 13px;font-size:12.5px;font-weight:500;background:${v.yes?"rgba(46,204,113,.16)":"rgba(231,76,91,.14)"};color:${v.yes?"var(--green)":"var(--red)"}">${v.yes?"YES":"NO"}</button></span>
+            ${lg?`<span style="width:196px;text-align:right;color:var(--green);font-size:13px">&#10003; logged</span>`
+              :p.locked?`<span style="width:196px;text-align:right"><span class="tag watch">wait for lineups</span></span>`
+              :`<span style="width:196px;text-align:right;white-space:nowrap">
+                <span class="muted" style="font-size:12px">$</span>
+                <input id="dv_${p._i}" type="number" placeholder="${p.stake||10}" style="width:60px;padding:5px 8px;text-align:right;font-size:13px">
+                <input id="dm_${p._i}" type="number" step="0.01" value="${multFromMax(p.maxPrice)}" style="width:60px;padding:5px 8px;text-align:right;font-size:13px">
+                <button class="btn sm" style="padding:5px 10px" onclick="quickLog(${p._i})">log</button></span>`}
+          </div>
+          ${DASHWHY===p._i?`<div style="padding:0 16px 12px"><div style="background:#101825;border-left:2px solid ${v.yes?"var(--green)":"var(--red)"};border-radius:0 8px 8px 0;padding:10px 12px">
+            <p class="small" style="margin:0;line-height:1.7">${esc(v.reasoning)}</p>
+            ${v.blockers.length?`<p class="small" style="margin:6px 0 0;color:#5d6879">Held against it: ${v.blockers.map(esc).join(" · ")}</p>`:""}
+            <p class="small" style="margin:6px 0 0;color:#4d5766">Locked and recorded — this call is graded whether or not you bet it.</p></div></div>`:""}
+        </div>`);
+      }
+      const cs=(BOARD&&BOARD.suggested)||[];
+      for(let ci=0;ci<cs.length;ci++){
+        const c=cs[ci], legs=c.legs.map(i=>plays.find(p=>p._i===i)||(BOARD.plays||[])[i]).filter(Boolean);
+        if(legs.length<2)continue;
+        const cv=comboVerdict(c,legs), name=legs.map(p=>p.bet).join(" + ");
+        const wid=-100-ci;
+        recs.push({mw,match:legs.map(p=>p.match).join(" | "),bet:name,market:"combo",kind:"combo",
+          legs:legs.map(p=>({match:p.match,bet:p.bet,prob:p.our})),our_prob:c.prob,price_cents:Math.round(100/(c.payout&&c.stake?c.payout/c.stake:1))||null,
+          edge_pp:c.roi-c.singles,verdict:cv.yes?"YES":"NO",reasoning:cv.reasoning,blockers:cv.blockers,
+          params:null,season:(DB.plstate&&DB.plstate.season)||null});
+        rows.push(`<div style="border-bottom:1px solid var(--border);border-left:3px solid var(--purple);background:rgba(167,139,250,.05)">
+          <div class="flex" style="padding:11px 16px;gap:6px;align-items:center">
+            <span style="flex:1;min-width:0;font-size:14.5px">
+              <span style="font-size:10.5px;letter-spacing:.08em;background:rgba(167,139,250,.18);color:var(--purple);padding:2px 8px;border-radius:20px;margin-right:7px">COMBO ${legs.length} LEGS</span>
+              <b>${esc(name)}</b>
+              <div class="muted" style="font-size:12px;margin-top:3px">${legs.map(p=>esc(p.match)).join(" · ")}${c.sameMatch?" · same match, correlation priced in":""}</div></span>
+            <b class="num" style="width:58px;text-align:right;font-size:17px;color:var(--purple)">${c.prob}%</b>
+            <span class="num" style="width:52px;text-align:right;color:var(--muted);font-size:13px">${c.stake&&c.payout?(c.payout/c.stake).toFixed(2):"—"}x</span>
+            <span style="width:64px;text-align:center"><button onclick="toggleWhy(${wid})" style="cursor:pointer;border:none;border-radius:20px;padding:3px 13px;font-size:12.5px;font-weight:500;background:${cv.yes?"rgba(46,204,113,.16)":"rgba(231,76,91,.14)"};color:${cv.yes?"var(--green)":"var(--red)"}">${cv.yes?"YES":"NO"}</button></span>
+            <span style="width:196px;text-align:right;white-space:nowrap">
+              <span class="muted" style="font-size:12px">$</span>
+              <input id="cv_${ci}" type="number" placeholder="${c.stake||5}" style="width:60px;padding:5px 8px;text-align:right;font-size:13px">
+              <input id="cm_${ci}" type="number" step="0.01" value="${c.stake&&c.payout?(c.payout/c.stake).toFixed(2):"2.00"}" style="width:60px;padding:5px 8px;text-align:right;font-size:13px">
+              <button class="btn sm" style="padding:5px 10px" onclick="quickLogCombo(${ci})">log</button></span>
+          </div>
+          ${DASHWHY===wid?`<div style="padding:0 16px 12px"><div style="background:#101825;border-left:2px solid ${cv.yes?"var(--green)":"var(--red)"};border-radius:0 8px 8px 0;padding:10px 12px">
+            <p class="small" style="margin:0;line-height:1.7">${esc(cv.reasoning)}</p>
+            ${cv.blockers.length?`<p class="small" style="margin:6px 0 0;color:#5d6879">Held against it: ${cv.blockers.map(esc).join(" · ")}</p>`:""}
+            <p class="small" style="margin:6px 0 0;color:#4d5766">Combo calls are tracked separately from singles.</p></div></div>`:""}
+        </div>`);
+      }
+      if(recs.length)setTimeout(()=>recordVerdicts(recs),300);
+      return rows.length?rows.join(""):'<p class="muted small" style="padding:14px 16px">No edges on the board yet — it scans automatically as fixtures approach.</p>';
+    })()}
   </div>
   ${(()=>{ if(DNEWS===null){DNEWS=[];api("news_items?select=*&order=published_at.desc&limit=60").then(r=>{DNEWS=r;if(TAB==="dashboard")render();}).catch(()=>{});} return ""; })()}
   <div class="panel" style="padding:0;overflow:hidden">
@@ -756,6 +847,45 @@ function vSimpleDashboard(){
     })()}
     ${(DNEWS||[]).length>8?`<div style="border-top:1px solid var(--border);padding:8px 16px"><button class="btn ghost sm" onclick="DNEWSMORE=!DNEWSMORE;render()">${DNEWSMORE?"show less":"show more"}</button></div>`:""}
   </div>
+  ${(()=>{ if(VERDS===null){VERDS=[];api("verdicts?select=*&order=mw.desc,locked_at.desc&limit=250").then(r=>{VERDS=r;if(TAB==="dashboard")render();}).catch(()=>{});} return ""; })()}
+  <div class="panel" style="padding:0;overflow:hidden">
+    <div class="flex" style="padding:13px 16px 8px"><h2 style="margin:0;font-size:16px">My call record</h2>
+      <span class="small right" style="color:#5d6879">a NO is graded too — on whether it would have won</span></div>
+    ${(()=>{
+      const V=(VERDS||[]).filter(v=>v.correct!=null);
+      const seg=(f)=>{const s=V.filter(f);return {n:s.length,c:s.filter(v=>v.correct).length};};
+      const y=seg(v=>v.verdict==="YES"&&v.kind==="single"), n=seg(v=>v.verdict==="NO"&&v.kind==="single");
+      const cy=seg(v=>v.verdict==="YES"&&v.kind==="combo"), cn=seg(v=>v.verdict==="NO"&&v.kind==="combo");
+      const mws=[...new Set((VERDS||[]).map(v=>v.mw))].sort((a,b)=>b-a).slice(0,6);
+      const line=(lab,o,col)=>{const p=o.n?Math.round(100*o.c/o.n):0;
+        return `<div class="flex" style="gap:8px;margin-bottom:6px;align-items:center">
+          <span class="small" style="width:118px">${lab}</span>
+          <div style="flex:1;height:9px;background:#0b1119;border-radius:5px;overflow:hidden"><div style="width:${p}%;height:9px;background:${o.n?col:"var(--border)"};border-radius:5px"></div></div>
+          <span class="small num" style="width:86px;text-align:right">${o.n?p+"%":"—"} <span class="muted" style="font-size:11px">${o.c}-${o.n-o.c}</span></span></div>`;};
+      return `<div style="padding:10px 16px 4px">
+        ${line("YES calls",y,"var(--green)")}${line("NO calls",n,"var(--blue)")}
+        ${line("combo YES",cy,"var(--purple)")}${line("combo NO",cn,"var(--purple)")}
+        <p class="small" style="margin:2px 0 8px;color:#5d6879">${V.length?V.length+" calls graded so far. Ungraded: "+((VERDS||[]).length-V.length)+".":"Nothing graded yet — calls grade as matches finish."}</p>
+      </div>
+      ${mws.length?`<div style="border-top:1px solid var(--border);padding:9px 16px">
+        <span class="small" style="color:#5d6879">matchday reports: </span>
+        ${mws.map(m=>{const s=(VERDS||[]).filter(v=>v.mw===m);const g=s.filter(v=>v.correct!=null);
+          return `<button class="btn ghost sm" style="margin:2px 3px;${VMW===m?"border-color:var(--accent);color:var(--accent)":""}" onclick="VMW=(VMW===${m}?null:${m});render()">MW${m} <span class="muted">${g.length}/${s.length}</span></button>`;}).join("")}
+      </div>`:""}
+      ${VMW!=null?`<div style="border-top:1px solid var(--border);padding:10px 16px">
+        ${(VERDS||[]).filter(v=>v.mw===VMW).map(v=>`<div style="padding:7px 0;border-bottom:1px solid #141b26">
+          <div class="flex" style="gap:8px;align-items:center">
+            <span style="border-radius:20px;padding:2px 10px;font-size:11.5px;background:${v.verdict==="YES"?"rgba(46,204,113,.16)":"rgba(231,76,91,.14)"};color:${v.verdict==="YES"?"var(--green)":"var(--red)"}">${v.verdict}</span>
+            ${v.kind==="combo"?'<span style="font-size:10.5px;letter-spacing:.08em;background:rgba(167,139,250,.18);color:var(--purple);padding:2px 7px;border-radius:20px">COMBO</span>':""}
+            <span style="flex:1;font-size:13px">${esc(v.bet)} <span class="muted" style="font-size:12px">${esc(v.match)}</span></span>
+            <span class="num small muted">${v.our_prob}%</span>
+            <span class="small" style="width:74px;text-align:right;color:${v.correct==null?"#4d5766":v.correct?"var(--green)":"var(--red)"}">${v.correct==null?"pending":v.correct?"right":"wrong"}</span>
+          </div>
+          ${v.result?`<div class="small" style="color:#5d6879;margin-top:3px">outcome: ${esc(v.result)}${v.verdict==="NO"?(v.would_have_hit?" — it would have won, so this NO is a miss":" — it would have lost, so passing was right"):""}</div>`:""}
+        </div>`).join("")||'<p class="small muted">No calls stored for that matchweek.</p>'}
+      </div>`:""}`;
+    })()}
+  </div>
   <div class="panel"><div class="flex"><h2>How good am I, by bet type</h2>
     <span class="small muted right">${Object.values(S).reduce((a,o)=>a+o.t,0)} graded · paper + real</span></div>
     ${barRow("winner",S.winner)}${barRow("over/under",S.goals)}${barRow("both to score",S.btts)}${barRow("combos",S.combo)}
@@ -777,6 +907,20 @@ function vSimpleDashboard(){
         ${open2?`<div style="padding:0 12px 10px">${angles(r.team)}</div>`:""}
       </div>`;}).join(""):'<p class="muted small" style="padding:12px">No results yet this season.</p>'}
   </div>`;
+}
+async function quickLogCombo(ci){
+  const c=((BOARD&&BOARD.suggested)||[])[ci]; if(!c)return;
+  const legs=c.legs.map(i=>(BOARD.plays||[])[i]).filter(Boolean);
+  const sv=document.getElementById("cv_"+ci), mv=document.getElementById("cm_"+ci);
+  const stake=+(sv&&sv.value), mult=+(mv&&mv.value);
+  if(!stake||stake<=0){toast("Type how much you bet first",false);return;}
+  if(!mult||mult<=1){toast("Multiplier must be above 1",false);return;}
+  try{
+    await api("bets_ledger",{method:"POST",body:{match:legs.map(p=>p.match).join(" | "),market:"combo",
+      side:legs.map(p=>p.bet).join(" + "),our_prob:c.prob,price_cents:Math.round(100/mult),stake:stake,
+      notes:"combo "+legs.length+" legs"+(c.sameMatch?" (same match, correlated)":"")}});
+    toast("Combo logged $"+stake+" at "+mult+"x"); loadAll();
+  }catch(e){toast(e.message,false)}
 }
 async function quickLog(i){
   const p=(BOARD&&BOARD.plays||[])[i]; if(!p)return;
