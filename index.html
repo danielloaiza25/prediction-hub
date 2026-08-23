@@ -85,7 +85,8 @@ details.rule{border-bottom:1px solid #1c2434;padding:8px 4px}
 <header>
   <h1>⚽ PREDICTION <span>HUB</span></h1>
   <nav id="nav"></nav>
-  <div class="right small muted" id="syncstate">connecting…</div>
+  <label class="right small muted" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="expertchk" style="width:14px;height:14px" onchange="setExpert(this.checked)"> expert</label>
+  <div class="small muted" id="syncstate">connecting…</div>
 </header>
 <div id="subnav"></div>
 <main id="main">Loading…</main>
@@ -102,6 +103,9 @@ async function api(path, opts={}){
   return r.status===204?null:r.json();
 }
 
+let EXPERT = localStorage.getItem("expert")==="1";
+let PAPERS=null;
+function setExpert(v){EXPERT=!!v;localStorage.setItem("expert",v?"1":"0");render();}
 let DB = {predictions:[], players:[], coaches:[], teams:[], venues:[], news:[], settings:{}, plf:[], plt:[], plstate:null};
 let TAB = location.hash.replace("#","") || "dashboard";
 
@@ -142,7 +146,7 @@ const outcomeTag = o => !o?'<span class="tag pend">PENDING</span>':o==="HIT"?'<s
 const GROUPS = [
   {id:"dashboard", label:"Dashboard", tabs:[["dashboard","Dashboard"]]},
   {id:"fixtures",  label:"Fixtures",  tabs:[["fixtures","Fixtures / Lineup Watch"],["inplay","In-Play Card"]]},
-  {id:"preds",     label:"Predictions", tabs:[["predictions","Log"],["engine","Engine Picks"],["ledger","Bet Ledger"],["autopsies","Autopsies"]]},
+  {id:"preds",     label:"Predictions", tabs:[["engine","Engine Picks"],["predictions","Archive (manual log)"],["ledger","Bet Ledger"],["autopsies","Autopsies"]]},
   {id:"league",    label:"League",    tabs:[["pltable","Table & Team Profiles"],["venues","Venues (AIS)"]]},
   {id:"squads",    label:"Scouting Report", tabs:[["scout","Clubs"],["players","Players (PRS)"],["coaches","Coaches (TMS)"]]},
   {id:"tools",     label:"Tools",     tabs:[["calculator","Calculator"],["data","Import / Export"]]},
@@ -162,6 +166,7 @@ function go(t){TAB=t;LASTTAB[groupOf(t).id]=t;location.hash=t;render();}
 
 function render(){
   renderNav();
+  const ec=document.getElementById("expertchk"); if(ec)ec.checked=EXPERT;
   const m=document.getElementById("main");
   if(TAB==="dashboard") m.innerHTML=vDashboard();
   else if(TAB==="predictions") m.innerHTML=vPredictions();
@@ -169,7 +174,7 @@ function render(){
   else if(TAB==="pltable"){renderPLTable();return;}
   else if(TAB==="autopsies"){renderAutopsies();return;}
   else if(TAB==="ledger") m.innerHTML=vLedger();
-  else if(TAB==="engine"){renderEngine();return;}
+  else if(TAB==="engine"){ if(PAPERS&&PAPERS.length){document.getElementById("main").innerHTML=vEngine();} else renderEngine(); return;}
   else if(TAB==="inplay"){renderInplay();return;}
   else if(TAB==="scout") m.innerHTML=vScout();
   else if(TAB==="players") m.innerHTML=vPlayers();
@@ -569,7 +574,58 @@ function openScanReport(fid){
   profileTeam=f.team_h_name; h2hOpp=f.team_a_name; h2hVenue="home";
   go("pltable");
 }
+function multFromMax(mp){return (100/mp).toFixed(2);}
+function vSimpleDashboard(){
+  // Q1 feed items
+  const feed=[];
+  const al=DB.players.filter(p=>p.prs>=8&&p.status&&p.status!=="fit"&&p.status!=="unavailable");
+  for(const p of al.slice(0,3))feed.push({c:"danger",icon:"⚠",t:`<b>${esc(p.name)}</b> (${esc(p.team)}, PRS ${p.prs}) is ${esc(p.status)} — any ${esc(p.team)} bet waits for lineups`});
+  const recent=(PAPERS||[]).filter(p=>p.settled).slice(0,3);
+  for(const p of recent){const o=p.outcomes||[];const nH=o.filter(x=>x.result==="HIT").length;
+    feed.push({c:o.length?(nH===o.length?"success":nH?"warn":"danger"):"muted",icon:"🧠",t:`<b>Graded:</b> ${esc(p.match)} ${esc(p.score||"")} — ${o.length?nH+" of "+o.length+" engine picks hit":"engine passed"}`});}
+  const settledBets=(DB.ledger||[]).filter(b=>b.result&&(b.notes||"").includes("auto-settled")).slice(0,2);
+  for(const b of settledBets)feed.push({c:b.result==="win"?"success":"danger",icon:"💵",t:`<b>Your bet settled:</b> ${esc(b.side)} — ${b.result==="win"?"won +$"+(b.payout-b.stake).toFixed(0):"lost $"+b.stake}`});
+  // Q2 picks
+  const ps=(BOARD&&BOARD.plays||[]).filter(p=>p.our!=null&&p.type!=="live").sort((a,b)=>(b.ev??-99)-(a.ev??-99));
+  const top=ps.slice(0,5);
+  const s2=BOARD&&BOARD.suggested&&BOARD.suggested[0];
+  // Q3
+  const graded=(PAPERS||[]).filter(p=>p.settled&&(p.outcomes||[]).length);
+  const allO=graded.flatMap(p=>p.outcomes);const hits=allO.filter(o=>o.result==="HIT").length;
+  const led=(DB.ledger||[]).filter(b=>b.result);
+  const pnl=led.reduce((a,b)=>a+((b.payout||0)-b.stake),0);
+  return plBanner()+`
+  ${(()=>{ if(!BOARD&&!BOARDREQ&&boardKey()){BOARDREQ=true;setTimeout(()=>refreshBoard(false),50);} if(PAPERS===null){PAPERS=[];api("paper_picks?select=*&order=kickoff.desc&limit=30").then(r=>{PAPERS=r;if(TAB==="dashboard")render();}).catch(()=>{});} return ""; })()}
+  <div class="panel"><h2>What's happening</h2>
+    ${feed.length?feed.map(f=>`<div class="detail" style="margin:6px 0;padding:9px 12px;border-left:3px solid ${f.c==="danger"?"var(--red)":f.c==="success"?"var(--green)":f.c==="warn"?"var(--accent)":"var(--border)"};border-radius:0 10px 10px 0"><span class="small">${f.icon} ${f.t}</span></div>`).join(""):'<p class="muted small">Quiet. Next fixtures load below.</p>'}
+  </div>
+  <div class="panel" style="border-color:var(--accent)"><div class="flex"><h2>What the engine likes</h2><button class="btn ghost sm right" onclick="refreshBoard(true)">↻</button></div>
+    ${top.length?top.map(p=>`<div class="detail" style="margin:8px 0">
+      <div class="flex"><b>${esc(p.match)}</b><span class="muted small">${esc(p.day||"")}</span>
+        <span class="small" style="color:var(--blue);font-weight:700">${esc(p.bet)}</span>
+        <b class="num" style="margin-left:auto;font-size:16px">${p.our}%</b></div>
+      <div class="flex small" style="margin-top:4px">
+        <span class="tag ${p.locked?"watch":"hit"}">${p.locked?"wait for lineups":"worth $"+(p.stake||3)+" at "+multFromMax(p.maxPrice)+"x or better"}</span>
+        ${p.our!=null&&!p.locked?`<button class="btn ghost sm right" onclick="logBetFromBoard(${p._i})">${LOGFORM===p._i?"close":"I bet this → log"}</button>`:""}</div>
+      ${LOGFORM===p._i?`<div class="flex" style="margin:6px 0 0;gap:8px;background:#0f1420;padding:8px 10px;border-radius:8px">
+        <span class="small muted">I bet $</span><input id="lb_stake" type="number" value="${p.stake||10}" style="width:64px;padding:4px 8px">
+        <span class="small muted">at</span><input id="lb_mult" type="number" step="0.01" value="${multFromMax(p.maxPrice)}" style="width:70px;padding:4px 8px"><span class="small muted">x</span>
+        <button class="btn sm" onclick="submitLogBet(${p._i})">save</button></div>`:""}
+      <p class="small muted" style="margin:4px 0 0">${esc(p.why||p.note||"")}</p>
+    </div>`).join(""):'<p class="muted small">No edges on the board yet — it scans automatically when fixtures approach.</p>'}
+    ${s2?`<div class="detail" style="margin-top:8px;border:1px solid var(--green)"><span class="small"><b style="color:var(--green)">Combo worth taking:</b> ${s2.legs.map(i=>esc((BOARD.plays[i]||{}).bet||"")).join(" + ")} — hits ${s2.prob}/100, $${s2.stake||2} pays $${s2.payout||"?"}</span></div>`:""}
+    ${ps.length>5?`<p class="small muted" style="margin-top:6px">${ps.length-5} more on the full board (expert view)</p>`:""}
+  </div>
+  <div class="panel"><h2>How are we doing</h2>
+    <div class="flex small" style="gap:18px">
+      <span>Engine picks: <b class="num">${allO.length?hits+"/"+allO.length+" ("+Math.round(100*hits/allO.length)+"%)":"—"}</b></span>
+      <span>Your money: <b class="num ${pnl>=0?"pos":"neg"}">${pnl>=0?"+":""}$${pnl.toFixed(0)}</b> <span class="muted">(${led.length} settled)</span></span>
+      <button class="btn ghost sm right" onclick="go('engine')">picks & lessons →</button>
+    </div>
+  </div>`;
+}
 function vDashboard(){
+  if(!EXPERT)return vSimpleDashboard();
   const t=tierStats(), bs=betStats(), es=edgeStats();
   const pct=(h,tt)=>tt?Math.round(h/tt*100)+"%":"—";
   const legacy = DB.settings.legacy_record||{};
@@ -749,7 +805,11 @@ async function settle(id){
 async function delPred(id){ if(!confirm("Delete this entry?"))return; try{await api("predictions?id=eq."+id,{method:"DELETE"}); expandId=null; toast("Deleted"); loadAll();}catch(e){toast(e.message,false)} }
 
 /* ---------- ENGINE PICKS (shadow book) ---------- */
-let PAPERS=null;
+let HWEDIT=null;
+async function saveHW(fid){
+  const v=document.getElementById("hw_"+fid).value;
+  try{await api("paper_picks?fixture_id=eq."+fid,{method:"PATCH",body:{dan_notes:v||null}});HWEDIT=null;toast("Notes saved — homework done ✓");PAPERS=null;renderEngine();}catch(e){toast(e.message,false)}
+}
 async function renderEngine(){
   const m=document.getElementById("main");
   m.innerHTML='<div class="panel"><p class="muted">Loading the shadow book…</p></div>';
@@ -792,6 +852,13 @@ function vEngine(){
       :`<p class="small muted" style="margin:5px 0">PASS — ${esc(p.pass_reason||"no edge")}</p>`}
     </div>
     ${p.analysis?`<div class="detail" style="margin-top:8px"><p class="small" style="margin:0">🧠 ${esc(p.analysis)}</p></div>`:""}
+    ${p.settled?`<div style="margin-top:8px">
+      ${p.dan_notes?`<div class="detail" style="border-left:3px solid var(--accent);border-radius:0 10px 10px 0"><p class="small" style="margin:0"><b class="muted">YOUR NOTES:</b> ${esc(p.dan_notes)}</p>
+        <button class="btn ghost sm" style="margin-top:4px" onclick="HWEDIT=${p.fixture_id};render()">edit</button></div>`:""}
+      ${(!p.dan_notes||HWEDIT===p.fixture_id)?`<div class="flex" style="gap:8px;margin-top:6px">
+        <input id="hw_${p.fixture_id}" placeholder="your homework: what did YOU see in this result?" style="flex:1" value="${esc(p.dan_notes||"")}">
+        <button class="btn sm" onclick="saveHW(${p.fixture_id})">save notes</button></div>`:""}
+    </div>`:""}
   </div>`;}).join(""):'<div class="panel"><p class="muted">No picks recorded yet — they generate automatically when the Bet Board scans a matchweek.</p></div>'}
   ${(()=>{
     const acts={};
