@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <style>
 :root{
-  --bg:#0b0e13; --panel:#141922; --panel2:#1a2130; --border:#242d3f;
+  --bg:#090d13; --panel:#151d29; --panel2:#0b1119; --border:#1f2836; --line:#26303f;
   --text:#e6ebf2; --muted:#8b97ab; --accent:#f5b942;
   --green:#2ecc71; --red:#e74c5b; --blue:#4aa3ff; --purple:#a78bfa;
   --font:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
@@ -23,26 +23,30 @@ header h1 span{color:var(--accent)}
 nav{display:flex;gap:4px;flex-wrap:wrap}
 nav button{background:none;border:1px solid transparent;color:var(--muted);padding:7px 13px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
 nav button:hover{color:var(--text)}
-nav button.active{background:var(--panel2);color:var(--accent);border-color:var(--border)}
-#subnav{display:flex;gap:4px;padding:8px 22px;background:#0f1420;border-bottom:1px solid var(--border)}
+nav button.active{background:#1b2432;color:var(--text);border-color:transparent}
+#subnav{display:flex;gap:4px;padding:8px 22px;background:#0d131d;border-bottom:1px solid var(--border)}
 #subnav:empty{display:none}
 #subnav button{background:none;border:none;color:var(--muted);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600}
-#subnav button.active{background:var(--panel2);color:var(--text)}
+#subnav button.active{background:#1b2432;color:var(--text)}
 #subnav button:hover{color:var(--text)}
 main{padding:22px;max-width:1280px;margin:0 auto}
 .grid{display:grid;gap:14px}
 .cards{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px}
-.card .k{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:6px}
-.card .v{font-size:26px;font-weight:700;font-family:var(--mono)}
-.card .s{font-size:12px;color:var(--muted);margin-top:4px}
-.panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin-top:14px}
-.panel h2{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--accent);margin-bottom:12px}
+.card{background:var(--panel);border:none;border-left:3px solid var(--blue);border-radius:0 10px 10px 0;padding:12px 14px}
+.card:nth-child(4n+1){border-left-color:var(--green)}
+.card:nth-child(4n+2){border-left-color:var(--blue)}
+.card:nth-child(4n+3){border-left-color:var(--accent)}
+.card:nth-child(4n+4){border-left-color:var(--purple)}
+.card .k{font-size:11px;letter-spacing:.06em;color:#5d6879;margin-bottom:3px}
+.card .v{font-size:24px;font-weight:500;font-family:var(--mono);line-height:1.25}
+.card .s{font-size:12px;color:#5d6879;margin-top:2px}
+.panel{background:var(--panel);border:none;border-radius:10px;padding:16px;margin-top:12px}
+.panel h2{font-size:13.5px;font-weight:500;letter-spacing:0;color:var(--text);margin-bottom:10px}
 table{width:100%;border-collapse:collapse}
-th{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer;white-space:nowrap}
-td{padding:9px 10px;border-bottom:1px solid #1c2434;vertical-align:top}
+th{font-size:11px;letter-spacing:.05em;color:#5d6879;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer;white-space:nowrap}
+td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top}
 tr.rowbtn{cursor:pointer}
-tr.rowbtn:hover td{background:#161d2a}
+tr.rowbtn:hover td{background:#1b2432}
 .tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.4px}
 .tag.hit{background:rgba(46,204,113,.15);color:var(--green)}
 .tag.miss{background:rgba(231,76,91,.15);color:var(--red)}
@@ -53,29 +57,31 @@ tr.rowbtn:hover td{background:#161d2a}
 .num{font-family:var(--mono)}
 .pos{color:var(--green)}.neg{color:var(--red)}
 .muted{color:var(--muted)}
-button.btn{background:var(--accent);color:#151515;border:none;padding:8px 16px;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px}
-button.btn.ghost{background:var(--panel2);color:var(--text);border:1px solid var(--border)}
+button.btn{background:var(--text);color:#0b0f16;border:none;padding:7px 14px;border-radius:7px;font-weight:500;cursor:pointer;font-size:13px}
+button.btn:hover{background:#fff}
+button.btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line);font-weight:400}
+button.btn.ghost:hover{border-color:#4a5769}
 button.btn.sm{padding:4px 10px;font-size:12px}
-input,select,textarea{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px;font-family:var(--font)}
+input,select,textarea{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:7px 10px;font-size:13px;font-family:var(--font)}
 textarea{width:100%;font-family:var(--mono);font-size:12px}
 input:focus,select:focus,textarea:focus{outline:1px solid var(--accent)}
 .formrow{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;align-items:flex-end}
 .formrow label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
-.detail{background:var(--panel2);border-radius:10px;padding:14px;margin:6px 0}
+.detail{background:#101825;border-radius:9px;padding:13px;margin:6px 0}
 .layers{display:flex;gap:0;flex-wrap:wrap;align-items:center;font-family:var(--mono);font-size:13px;margin:8px 0}
-.layers .step{background:#0f1420;border:1px solid var(--border);border-radius:8px;padding:8px 12px;text-align:center;min-width:86px}
+.layers .step{background:#0b1119;border:1px solid var(--border);border-radius:8px;padding:8px 12px;text-align:center;min-width:86px}
 .layers .step .lk{font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.7px}
 .layers .step .lv{font-size:15px;font-weight:700;margin-top:2px}
 .layers .arr{padding:0 8px;color:var(--muted)}
 .layers .final{border-color:var(--accent)}
 .layers .final .lv{color:var(--accent)}
-#toast{position:fixed;bottom:22px;right:22px;background:var(--panel2);border:1px solid var(--accent);color:var(--text);padding:12px 18px;border-radius:10px;display:none;z-index:99;max-width:420px}
-.bar{height:8px;background:#0f1420;border-radius:5px;overflow:hidden;margin-top:6px}
+#toast{position:fixed;bottom:22px;right:22px;background:#1b2432;border:1px solid var(--line);color:var(--text);padding:12px 18px;border-radius:10px;display:none;z-index:99;max-width:420px}
+.bar{height:8px;background:#0b1119;border-radius:5px;overflow:hidden;margin-top:6px}
 .bar i{display:block;height:100%;background:var(--green)}
-details.rule{border-bottom:1px solid #1c2434;padding:8px 4px}
+details.rule{border-bottom:1px solid var(--border);padding:8px 4px}
 .flex{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .right{margin-left:auto}
-.calcout{background:#0f1420;border:1px solid var(--accent);border-radius:12px;padding:18px;margin-top:14px;text-align:center}
+.calcout{background:var(--panel);border:none;border-left:3px solid var(--accent);border-radius:0 10px 10px 0;padding:18px;margin-top:14px;text-align:center}
 .calcout .big{font-size:38px;font-weight:800;font-family:var(--mono);color:var(--accent)}
 .small{font-size:12px}
 @media(max-width:700px){main{padding:12px}.layers .step{min-width:70px}}
@@ -192,28 +198,45 @@ const fxScore = f => f.team_h_score==null?"":`${f.team_h_score}-${f.team_a_score
 const fxWinner = f => !f.finished?null:(f.team_h_score>f.team_a_score?f.team_h_name:f.team_a_score>f.team_h_score?f.team_a_name:"Draw");
 const fxResultStr = f => `${f.team_h_name} ${f.team_h_score}-${f.team_a_score} ${f.team_a_name}`;
 function seasonNotStarted(s){ return s && !s.season_over && (s.current_gw==null); }
+const ABBR={"Arsenal":"ARS","Aston Villa":"AVL","Bournemouth":"BOU","Brentford":"BRE","Brighton":"BHA","Chelsea":"CHE","Coventry City":"COV","Crystal Palace":"CRY","Everton":"EVE","Fulham":"FUL","Hull City":"HUL","Ipswich Town":"IPS","Leeds":"LEE","Liverpool":"LIV","Man City":"MCI","Man Utd":"MUN","Newcastle":"NEW","Nott'm Forest":"NFO","Spurs":"TOT","Sunderland":"SUN","West Ham":"WHU","Wolves":"WOL","Brighton & Hove Albion":"BHA","Tottenham":"TOT","Leeds United":"LEE"};
+function abbr(n){ if(!n)return "";
+  if(ABBR[n])return ABBR[n];
+  const w=String(n).replace(/[^A-Za-z ]/g,"").trim().split(/\s+/);
+  return (w.length>1?(w[0][0]+w[1][0]+(w[1][1]||w[0][1]||"")):w[0].slice(0,3)).toUpperCase();
+}
+function fxDone(f){ return !!(f.finished||f.finished_provisional||(f.team_h_score!=null&&f.kickoff&&(Date.now()-new Date(f.kickoff).getTime())>9000000)); }
+function fxLive(f){ return !!(f.started&&!fxDone(f)); }
 function plBanner(){
   const s=DB.plstate;
   if(!s) return `<div class="panel" style="margin-top:0"><h2>Premier League</h2><p class="muted">No PL data yet — <button class="btn sm" onclick="syncPL(false)">Sync now</button></p></div>`;
-  let big, sub, extra="";
-  if(s.season_over){
-    big=`SEASON ${s.season} COMPLETE`;
-    sub=`All 38 matchweeks played · next season's fixtures load automatically when the FPL API resets (usually July)`;
-  } else if(seasonNotStarted(s)){
-    big=`SEASON ${s.season} — NOT STARTED`;
-    sub=s.first_kickoff?`First kickoff: ${new Date(s.first_kickoff).toLocaleString([],{dateStyle:"full",timeStyle:"short"})}`:"Fixtures loaded, awaiting kickoff";
-  } else {
-    big=`MATCHWEEK ${s.current_gw} <span class="muted" style="font-weight:400">of 38</span>`;
-    sub=`Season ${s.season}`;
-    const live=DB.plf.filter(f=>f.started&&!f.finished);
-    if(live.length) extra=`<div style="margin-top:8px">${live.map(f=>`<span class="tag miss">● LIVE</span> ${esc(fxLabel(f))} <b class="num">${fxScore(f)}</b>`).join(" &nbsp; ")}</div>`;
-  }
-  return `<div class="panel" style="margin-top:0;border-color:var(--accent)">
-    <div class="flex"><div>
-      <div style="font-size:22px;font-weight:800;letter-spacing:.5px">${big}</div>
-      <div class="muted small" style="margin-top:4px">${sub}</div>${extra}
+  let numeral, label, sub;
+  if(s.season_over){ numeral="38"; label="season complete"; sub=`all matchweeks played · ${esc(String(s.season))}`; }
+  else if(seasonNotStarted(s)){ numeral="—"; label="season not started"; sub=s.first_kickoff?`first kickoff ${new Date(s.first_kickoff).toLocaleDateString([],{weekday:"short",month:"short",day:"numeric"})}`:`season ${esc(String(s.season))}`; }
+  else { numeral=String(s.current_gw).padStart(2,"0"); label="matchweek of 38"; sub=`season ${esc(String(s.season))}`; }
+  const gw=s.current_gw;
+  const fx=(DB.plf||[]).filter(f=>(+f.event||0)===+gw&&f.team_h_name&&f.team_a_name)
+    .sort((a,b)=>new Date(a.kickoff)-new Date(b.kickoff));
+  const chip=f=>{
+    const live=fxLive(f), done=fxDone(f);
+    const sc=f.team_h_score==null?"":`<b style="color:var(--text)">${f.team_h_score}</b>-<b style="color:var(--text)">${f.team_a_score}</b>`;
+    const when=!done&&!live?`<span style="color:#4d5766">${f.kickoff?new Date(f.kickoff).toLocaleDateString([],{weekday:"short"})+" "+new Date(f.kickoff).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):""}</span>`:"";
+    return `<span style="background:#151d29;border-radius:7px;padding:6px 9px;font-size:12px;color:var(--muted);white-space:nowrap;display:inline-flex;gap:5px;align-items:center">
+      ${live?`<span style="color:var(--red);font-size:10px;letter-spacing:.05em">&#9679; live</span>`:""}
+      ${abbr(f.team_h_name)} ${sc||when} ${abbr(f.team_a_name)}</span>`;
+  };
+  const shown=fx.slice(0,7), rest=fx.length-shown.length;
+  return `<div class="panel" style="margin-top:0;padding:14px 16px">
+    <div class="flex" style="align-items:center">
+      <div class="flex" style="gap:10px;align-items:baseline">
+        <span class="num" style="font-size:30px;font-weight:500;line-height:1">${numeral}</span>
+        <span><span class="small" style="color:var(--text);display:block">${label}</span>
+        <span style="font-size:11.5px;color:#4d5766">${sub}</span></span>
+      </div>
+      <div class="right small" style="text-align:right;color:#4d5766">synced ${s.last_sync?new Date(s.last_sync).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):"—"}
+        <button class="btn ghost sm" onclick="syncPL(false)" style="margin-left:8px">&#8635;</button></div>
     </div>
-    <div class="right small muted" style="text-align:right">last sync ${s.last_sync?new Date(s.last_sync).toLocaleTimeString():"—"}<br><button class="btn ghost sm" onclick="syncPL(false)" style="margin-top:4px">↻ Refresh</button></div></div>
+    ${fx.length?`<div class="flex" style="gap:6px;margin-top:11px">${shown.map(chip).join("")}
+      ${rest>0?`<span style="background:#151d29;border-radius:7px;padding:6px 9px;font-size:12px;color:#4d5766">+${rest}</span>`:""}</div>`:""}
   </div>`;
 }
 function plTable(){
@@ -506,7 +529,7 @@ async function fetchLivePrices(){
   try{localStorage.setItem(BOARD.key,JSON.stringify(BOARD));}catch(e){}
   render(); toast("Live prices attached where markets exist");
 }
-function pbar(pct){return `<div style="height:6px;width:74px;background:#0f1420;border-radius:4px;overflow:hidden;display:inline-block;vertical-align:middle"><i style="display:block;height:100%;width:${Math.max(3,Math.min(100,pct))}%;background:var(--accent)"></i></div>`;}
+function pbar(pct){return `<div style="height:6px;width:74px;background:#0b1119;border-radius:4px;overflow:hidden;display:inline-block;vertical-align:middle"><i style="display:block;height:100%;width:${Math.max(3,Math.min(100,pct))}%;background:var(--accent)"></i></div>`;}
 function comboPanel(){
   const legs=(BOARD.plays||[]).filter(p=>SEL.has(p._i));
   if(legs.length<2)return `<div class="detail" style="margin-top:12px"><p class="small muted">Tick two or more bets above to test them as a combo.</p></div>`;
@@ -552,7 +575,7 @@ function renderBoard(){
         <span class="right small ${p.livePrice!=null?(p.livePrice<=p.maxPrice?"pos":"neg"):"muted"}">${p.our==null?"wait for the game state":(p.livePrice!=null?(p.livePrice<=p.maxPrice?"live "+p.livePrice+"¢ — buy now":"live "+p.livePrice+"¢ — too dear, pass"):"buy at "+p.maxPrice+"¢ or less")}</span>
         ${p.our!=null&&!p.locked?`<button class="btn ghost sm" onclick="logBetFromBoard(${p._i})">${LOGFORM===p._i?"close":"log"}</button>`:""}
       </div>
-      ${LOGFORM===p._i?`<div class="flex" style="margin:6px 0 0 26px;gap:8px;background:#0f1420;padding:8px 10px;border-radius:8px">
+      ${LOGFORM===p._i?`<div class="flex" style="margin:6px 0 0 26px;gap:8px;background:#0b1119;padding:8px 10px;border-radius:8px">
         <span class="small muted">I bet $</span><input id="lb_stake" type="number" value="${p.stake||10}" style="width:64px;padding:4px 8px">
         <span class="small muted">at</span><input id="lb_mult" type="number" step="0.01" value="${(100/(p.livePrice||p.maxPrice)).toFixed(2)}" style="width:70px;padding:4px 8px"><span class="small muted">x multiplier</span>
         <span class="small muted" id="lb_pay"></span>
@@ -627,7 +650,7 @@ function vSimpleDashboard(){
     const col=!o.t?"var(--border)":pct>=be+3?"var(--green)":pct<=be-3?"var(--red)":"var(--muted)";
     return `<div class="flex" style="gap:8px;margin-bottom:6px;align-items:center">
       <span class="small" style="width:88px">${label}</span>
-      <div style="flex:1;height:9px;background:#0f1420;border-radius:5px;overflow:hidden"><div style="width:${pct}%;height:9px;background:${col};border-radius:5px"></div></div>
+      <div style="flex:1;height:9px;background:#0b1119;border-radius:5px;overflow:hidden"><div style="width:${pct}%;height:9px;background:${col};border-radius:5px"></div></div>
       <span class="small num" style="width:82px;text-align:right">${o.t?pct+"%":"—"} <span class="muted" style="font-size:11px">${o.h}-${o.t-o.h}</span></span></div>`;
   };
   const done=DB.plf.filter(f=>f.finished&&f.team_h_name&&f.team_a_name);
@@ -698,7 +721,7 @@ function vSimpleDashboard(){
     ${now.length?now.map((r,i)=>{
       const pp=prevPos[r.team], mv=pp?pp-(i+1):0, lr=lastOf[r.team];
       const open2=DASHTEAM===r.team;
-      return `<div style="border-top:1px solid var(--border);${open2?"background:#0f1420":""}">
+      return `<div style="border-top:1px solid var(--border);${open2?"background:#0b1119":""}">
         <div class="flex rowbtn" style="padding:7px 12px;gap:8px;align-items:center;cursor:pointer" onclick="toggleDashTeam('${esc(r.team).replace(/'/g,"&#39;")}')">
           <span class="num muted" style="width:22px">${i+1}</span>
           <b style="flex:1">${esc(r.team)}</b>
@@ -2028,7 +2051,7 @@ function vVenues(){
     <td><button class="btn ghost sm" onclick="delVenue(${v.id})">✕</button></td></tr>`}).join("")}
   </table></div>
   <div class="panel"><h2>AIS Formula (McSharry, BMJ — 1,460 matches)</h2>
-  <p class="num" style="background:#0f1420;padding:12px;border-radius:8px">altitude gap (m) ÷ 1,000 × 0.5 = goal advantage &nbsp;·&nbsp; 1 goal ≈ 10-12% win prob swing</p>
+  <p class="num" style="background:#0b1119;padding:12px;border-radius:8px">altitude gap (m) ÷ 1,000 × 0.5 = goal advantage &nbsp;·&nbsp; 1 goal ≈ 10-12% win prob swing</p>
   <p class="small muted" style="margin-top:8px">Time curve: impact compounds after minute 60 (visitor pressing/sprint recovery collapses 60-75'). Reversal: advantage is venue-specific — a high-altitude team playing at sea level loses it entirely, with a small re-acclimatization penalty. Hard Rule 8: never bet against a large altitude advantage in knockouts unless the quality gap is extreme.</p></div>`;
 }
 async function addVenue(){
