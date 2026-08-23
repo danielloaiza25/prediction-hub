@@ -142,7 +142,7 @@ const outcomeTag = o => !o?'<span class="tag pend">PENDING</span>':o==="HIT"?'<s
 const GROUPS = [
   {id:"dashboard", label:"Dashboard", tabs:[["dashboard","Dashboard"]]},
   {id:"fixtures",  label:"Fixtures",  tabs:[["fixtures","Fixtures / Lineup Watch"],["inplay","In-Play Card"]]},
-  {id:"preds",     label:"Predictions", tabs:[["predictions","Log"],["ledger","Bet Ledger"],["autopsies","Autopsies"]]},
+  {id:"preds",     label:"Predictions", tabs:[["predictions","Log"],["engine","Engine Picks"],["ledger","Bet Ledger"],["autopsies","Autopsies"]]},
   {id:"league",    label:"League",    tabs:[["pltable","Table & Team Profiles"],["venues","Venues (AIS)"]]},
   {id:"squads",    label:"Scouting Report", tabs:[["scout","Clubs"],["players","Players (PRS)"],["coaches","Coaches (TMS)"]]},
   {id:"tools",     label:"Tools",     tabs:[["calculator","Calculator"],["data","Import / Export"]]},
@@ -169,6 +169,7 @@ function render(){
   else if(TAB==="pltable"){renderPLTable();return;}
   else if(TAB==="autopsies"){renderAutopsies();return;}
   else if(TAB==="ledger") m.innerHTML=vLedger();
+  else if(TAB==="engine"){renderEngine();return;}
   else if(TAB==="inplay"){renderInplay();return;}
   else if(TAB==="scout") m.innerHTML=vScout();
   else if(TAB==="players") m.innerHTML=vPlayers();
@@ -366,6 +367,17 @@ async function buildBoard(force){
   SEL=new Set();
   BOARD={key,ts:Date.now(),mw,plays,passed,total:fixtures.length,grids};
   BOARD.suggested=bestCombos();
+  // shadow book: record the engine's own call for EVERY fixture (PASS included)
+  try{
+    const rows=fixtures.map(f=>{
+      const mine=plays.filter(p=>p.fid===f.id&&p.our!=null&&p.type!=="live");
+      return {fixture_id:f.id,match:f.team_h_name+" vs "+f.team_a_name,kickoff:f.kickoff,mw,
+        picks:mine.map(p=>({market:p.type,side:p.mkt&&p.mkt.home!=null?(p.mkt.home?"home":"away"):null,pick:p.bet,prob:p.our,max_price:p.maxPrice,why:p.why||""})),
+        pass_reason:mine.length?null:"no edge ≥5pp found (or data too thin)",
+        engine:{generated:new Date().toISOString(),src:"board"}};
+    });
+    api("paper_picks?on_conflict=fixture_id",{method:"POST",headers:{Prefer:"resolution=ignore-duplicates"},body:rows}).catch(()=>{});
+  }catch(e){}
   try{localStorage.setItem(key,JSON.stringify(BOARD));}catch(e){}
 }
 /* ---------- COMBO ENGINE ---------- */
@@ -433,17 +445,19 @@ function bestCombos(){
 }
 function toggleLeg(i){ if(SEL.has(i))SEL.delete(i); else SEL.add(i); render(); }
 function selectCombo(idxs){ SEL=new Set(idxs); render(); toast("Combo loaded into the slip"); }
+let COMBOFORM=false;
 async function logCombo(){
   const legs=(BOARD.plays||[]).filter(p=>SEL.has(p._i));
   if(legs.length<2)return;
   const q=comboQuote(legs); if(!q)return;
-  const price=prompt("Combo price actually paid (cents):",Math.round(q.price*100));
-  if(!price)return;
-  const stake=prompt("Stake ($):",q.stake||2); if(!stake)return;
+  const pe=document.getElementById("cb_price"), se=document.getElementById("cb_stake");
+  if(!pe){ COMBOFORM=true; render(); return; }
+  const price=+pe.value, stake=+se.value;
+  if(!price||!stake){toast("Enter price and stake",false);return;}
   try{
     await api("bets_ledger",{method:"POST",body:{match:legs.map(p=>p.match).join(" + "),market:"combo",
       side:legs.map(p=>p.bet).join(" AND "),our_prob:+(q.prob*100).toFixed(0),price_cents:+price,stake:+stake}});
-    toast("Combo logged to ledger"); loadAll();
+    COMBOFORM=false; toast("Combo logged ✓"); loadAll();
   }catch(e){toast(e.message,false)}
 }
 async function saveBankroll(v){
@@ -497,7 +511,7 @@ function comboPanel(){
       ${chipHtml("same legs separately: "+(q.singlesRoi>0?"+":"")+Math.round(q.singlesRoi*100)+"%","neutral")}
       <b style="color:${col}">${q.good?"✓ combo wins — take it":(q.prob<COMBO_MIN_HIT?"✗ hits too rarely ("+Math.round(q.prob*100)+"% — floor is 35%) — bet them separately":"✗ singles pay better — bet them separately")}</b></div>
     <p class="small" style="margin-top:8px;color:var(--muted)">${q.sameMatch?"Same match — correlation priced from the full scoreline grid, not naive multiplication.":"Different matches — one result can't drag the other down."} Stake is halved because combos lose more often.</p>
-    ${q.good?`<div class="flex" style="margin-top:8px"><button class="btn sm" onclick="logCombo()">Log this combo</button></div>`:""}
+    ${q.good?`<div class="flex" style="margin-top:8px;gap:8px">${COMBOFORM?`<span class="small muted">paid</span><input id="cb_price" type="number" value="${Math.round(q.price*100)}" style="width:64px;padding:4px 8px"><span class="small muted">¢ · stake $</span><input id="cb_stake" type="number" value="${q.stake||2}" style="width:64px;padding:4px 8px">`:""}<button class="btn sm" onclick="logCombo()">${COMBOFORM?"save combo to ledger":"Log this combo"}</button></div>`:""}
   </div>`;
 }
 function renderBoard(){
@@ -524,8 +538,12 @@ function renderBoard(){
         ${p.stake?`<b class="num" style="color:var(--accent)">$${p.stake}</b>`:""}
         ${p.our!=null?(p.comboOk?chipHtml("combo-friendly","success"):chipHtml("don't combo","warning")):""}
         <span class="right small ${p.livePrice!=null?(p.livePrice<=p.maxPrice?"pos":"neg"):"muted"}">${p.our==null?"wait for the game state":(p.livePrice!=null?(p.livePrice<=p.maxPrice?"live "+p.livePrice+"¢ — buy now":"live "+p.livePrice+"¢ — too dear, pass"):"buy at "+p.maxPrice+"¢ or less")}</span>
-        ${p.our!=null&&!p.locked?`<button class="btn ghost sm" onclick="logBetFromBoard(${p._i})">log</button>`:""}
+        ${p.our!=null&&!p.locked?`<button class="btn ghost sm" onclick="logBetFromBoard(${p._i})">${LOGFORM===p._i?"close":"log"}</button>`:""}
       </div>
+      ${LOGFORM===p._i?`<div class="flex" style="margin:6px 0 0 26px;gap:8px;background:#0f1420;padding:8px 10px;border-radius:8px">
+        <span class="small muted">paid</span><input id="lb_price" type="number" value="${p.livePrice||p.maxPrice}" style="width:64px;padding:4px 8px"><span class="small muted">¢</span>
+        <span class="small muted">stake $</span><input id="lb_stake" type="number" value="${p.stake||10}" style="width:64px;padding:4px 8px">
+        <button class="btn sm" onclick="submitLogBet(${p._i})">save to ledger</button></div>`:""}
       <p class="small muted" style="margin:3px 0 0 26px">${esc(p.why||p.note||"")}</p>`).join("")}
   </div>`).join("")}
   ${sug.length?`<div class="panel" style="margin-top:12px;border-color:var(--green)"><h2 style="color:var(--green)">Combos worth taking this week</h2>
@@ -722,15 +740,63 @@ async function settle(id){
 }
 async function delPred(id){ if(!confirm("Delete this entry?"))return; try{await api("predictions?id=eq."+id,{method:"DELETE"}); expandId=null; toast("Deleted"); loadAll();}catch(e){toast(e.message,false)} }
 
+/* ---------- ENGINE PICKS (shadow book) ---------- */
+let PAPERS=null;
+async function renderEngine(){
+  const m=document.getElementById("main");
+  m.innerHTML='<div class="panel"><p class="muted">Loading the shadow book…</p></div>';
+  try{ PAPERS=await api("paper_picks?select=*&order=kickoff.desc&limit=120"); }catch(e){ m.innerHTML='<p class="neg">'+esc(e.message)+'</p>'; return; }
+  m.innerHTML=vEngine(); window.scrollTo(0,0);
+}
+function vEngine(){
+  const P=PAPERS||[];
+  const graded=P.filter(p=>p.settled&&(p.outcomes||[]).length);
+  const allO=graded.flatMap(p=>p.outcomes);
+  const hits=allO.filter(o=>o.result==="HIT").length;
+  const byType={};
+  for(const o of allO){ const t=byType[o.market]=byType[o.market]||{h:0,n:0}; t.n++; if(o.result==="HIT")t.h++; }
+  const hi=allO.filter(o=>o.prob>=60), hiH=hi.filter(o=>o.result==="HIT").length;
+  const roi=allO.length?allO.reduce((a,o)=>a+((o.result==="HIT"?(100/((o.prob-5)||50)*((o.prob-5)/100)*100):0)),0):0;
+  const wroi=allO.length?(allO.reduce((a,o)=>{const pr=(o.prob-5)/100;return a+(o.result==="HIT"?(1/pr-1):-1);},0)/allO.length*100):null;
+  const passes=P.filter(p=>p.settled&&!(p.outcomes||[]).length);
+  const passRight=passes.filter(p=>String(p.analysis||"").includes("looks right")).length;
+  return `
+  <div class="flex"><h2 style="color:var(--accent);text-transform:uppercase;font-size:14px;letter-spacing:1px">Engine Picks — the shadow book</h2>
+  <span class="right small muted">every match gets a call · graded automatically · nothing staked</span></div>
+  <div class="grid cards" style="margin-top:10px">
+    ${card("Picks graded",allO.length,graded.length+" matches")}
+    ${card("Hit rate",allO.length?Math.round(100*hits/allO.length)+"%":"—",Object.entries(byType).map(([t,v])=>t+" "+v.h+"/"+v.n).join(" · ")||"—")}
+    ${card("Said 60%+, hit",hi.length?Math.round(100*hiH/hi.length)+"%":"—",hi.length+" confident calls — calibration check")}
+    ${card("Would-be ROI",wroi==null?"—":((wroi>0?"+":"")+wroi.toFixed(0)+"%"),"flat $1 at our max prices")}
+    ${card("Passes",passes.length,passes.length?passRight+" look right":"skipping is a graded choice")}
+  </div>
+  ${P.length?P.map(p=>{
+    const o=p.outcomes||[];
+    const nH=o.filter(x=>x.result==="HIT").length;
+    return `<div class="panel" style="margin-top:10px">
+    <div class="flex"><b style="font-size:15px">${esc(p.match)}${p.settled&&p.score?" — "+esc(p.score):""}</b>
+      <span class="muted small">${p.kickoff?new Date(p.kickoff).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}):""}</span>
+      ${p.settled?(o.length?`<span class="tag ${nH===o.length?"hit":nH?"watch":"miss"}" style="margin-left:auto">${nH} of ${o.length} hit</span>`:`<span class="tag pend" style="margin-left:auto">PASSED</span>`):`<span class="tag pend" style="margin-left:auto">OPEN</span>`}</div>
+    <div style="border-left:2px solid var(--border);padding-left:12px;margin-top:8px">
+      ${(p.picks&&p.picks.length)?p.picks.map((k,i)=>{
+        const res=p.settled&&o[i]?o[i].result:null;
+        return `<p class="small" style="margin:5px 0">${res?`<span class="tag ${res==="HIT"?"hit":"miss"}">${res}</span> `:""}${esc(k.pick)} — <b>${k.prob}%</b> <span class="muted">· ${esc(k.why||"")}</span></p>`;}).join("")
+      :`<p class="small muted" style="margin:5px 0">PASS — ${esc(p.pass_reason||"no edge")}</p>`}
+    </div>
+    ${p.analysis?`<div class="detail" style="margin-top:8px"><p class="small" style="margin:0">🧠 ${esc(p.analysis)}</p></div>`:""}
+  </div>`;}).join(""):'<div class="panel"><p class="muted">No picks recorded yet — they generate automatically when the Bet Board scans a matchweek.</p></div>'}
+  <p class="small muted" style="margin-top:10px">Grading and one-line analysis are automatic (hourly). Deeper per-match reviews and any engine tweaks happen in our sessions — proposals only, you approve.</p>`;
+}
 /* ---------- BET LEDGER ---------- */
-async function logBetFromBoard(i){
-  const p=(BOARD&&BOARD.plays||[])[i]; if(!p||p.our==null)return;
-  const price=prompt(`Price actually paid (cents) for: ${p.bet} — ${p.match}\nBoard max was ${p.maxPrice}¢`, p.livePrice||p.maxPrice);
-  if(!price)return;
-  const stake=prompt("Stake ($):", p.stake||25); if(!stake)return;
+let LOGFORM=null;
+function logBetFromBoard(i){ LOGFORM=(LOGFORM===i?null:i); render(); }
+async function submitLogBet(i){
+  const p=(BOARD&&BOARD.plays||[])[i]; if(!p)return;
+  const price=+document.getElementById("lb_price").value, stake=+document.getElementById("lb_stake").value;
+  if(!price||!stake){toast("Enter price and stake",false);return;}
   try{
-    await api("bets_ledger",{method:"POST",body:{match:p.match,market:p.type,side:p.bet,our_prob:p.our,price_cents:+price,stake:+stake}});
-    toast("Bet logged to ledger"); loadAll();
+    await api("bets_ledger",{method:"POST",body:{match:p.match,market:p.type,side:p.bet,our_prob:p.our,price_cents:price,stake:stake}});
+    LOGFORM=null; toast("Bet logged ✓ — see it in Predictions › Bet Ledger"); loadAll();
   }catch(e){toast(e.message,false)}
 }
 async function settleBet(id,won){
