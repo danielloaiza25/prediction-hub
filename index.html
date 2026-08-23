@@ -151,9 +151,9 @@ const outcomeTag = o => !o?'<span class="tag pend">PENDING</span>':o==="HIT"?'<s
 /* ---------- NAV ---------- */
 const GROUPS = [
   {id:"dashboard", label:"Dashboard", tabs:[["dashboard","Dashboard"]]},
-  {id:"fixtures",  label:"Fixtures",  tabs:[["fixtures","Fixtures / Lineup Watch"],["inplay","In-Play Card"]]},
+  {id:"news",      label:"News",      tabs:[["news","Live feed & notes"]]},
   {id:"preds",     label:"Predictions", tabs:[["engine","Engine Picks"],["predictions","Archive (manual log)"],["ledger","Bet Ledger"],["autopsies","Autopsies"]]},
-  {id:"league",    label:"League",    tabs:[["pltable","Table & Team Profiles"],["venues","Venues (AIS)"]]},
+  {id:"league",    label:"League",    tabs:[["pltable","Table & Team Profiles"],["fixtures","Matchweek detail"],["inplay","In-Play Card"],["venues","Venues (AIS)"]]},
   {id:"squads",    label:"Scouting Report", tabs:[["scout","Clubs"],["players","Players (PRS)"],["coaches","Coaches (TMS)"]]},
   {id:"tools",     label:"Tools",     tabs:[["calculator","Calculator"],["data","Import / Export"]]},
 ];
@@ -177,6 +177,7 @@ function render(){
   if(TAB==="dashboard") m.innerHTML=vDashboard();
   else if(TAB==="predictions") m.innerHTML=vPredictions();
   else if(TAB==="fixtures") m.innerHTML=vFixtures();
+  else if(TAB==="news") m.innerHTML=vNews();
   else if(TAB==="pltable"){renderPLTable();return;}
   else if(TAB==="autopsies"){renderAutopsies();return;}
   else if(TAB==="ledger") m.innerHTML=vLedger();
@@ -818,7 +819,7 @@ function vSimpleDashboard(){
   ${(()=>{ if(DNEWS===null){DNEWS=[];api("news_items?select=*&order=published_at.desc&limit=60").then(r=>{DNEWS=r;if(TAB==="dashboard")render();}).catch(()=>{});} return ""; })()}
   <div class="panel" style="padding:0;overflow:hidden">
     <div class="flex" style="padding:13px 16px 8px"><h2 style="margin:0;font-size:16px">News</h2>
-      <span class="small" style="color:#5d6879">${DNEWSFIL==="all"?"everything":DNEWSFIL}</span>
+      <button class="btn ghost sm" onclick="go('news')">open news tab &rarr;</button>
       <span class="right flex" style="gap:4px">
         ${["all","injury","transfer","manager","suspension"].map(k=>`<button class="btn ghost sm" style="padding:3px 9px;${DNEWSFIL===k?"border-color:var(--accent);color:var(--accent)":""}" onclick="setNewsFil('${k}')">${k==="all"?"all":k}</button>`).join("")}
       </span></div>
@@ -826,7 +827,7 @@ function vSimpleDashboard(){
       const mine=new Set([...(BOARD&&BOARD.plays||[]).flatMap(p=>String(p.match||"").split(" vs ")),...(DB.ledger||[]).filter(b=>!b.result).flatMap(b=>String(b.match||"").split(" vs "))].map(s=>s.trim()).filter(Boolean));
       let ns=(DNEWS||[]).filter(n=>DNEWSFIL==="all"||n.kind===DNEWSFIL);
       const rel=n=>(n.teams||[]).some(t=>mine.has(t));
-      ns=[...ns.filter(rel),...ns.filter(n=>!rel(n))].slice(0,DNEWSMORE?24:8);
+      ns=[...ns.filter(rel),...ns.filter(n=>!rel(n))].slice(0,DNEWSMORE?12:4);
       if(!ns.length)return '<p class="muted small" style="padding:14px 16px">Nothing in this category yet — the feed refreshes hourly.</p>';
       const ico={injury:"&#9888;",transfer:"&#8644;",manager:"&#9873;",suspension:"&#9940;"};
       const col={injury:"var(--red)",transfer:"var(--blue)",manager:"var(--purple)",suspension:"var(--accent)"};
@@ -1449,6 +1450,69 @@ function predictFixture(fid){
   PREFILL={match:fxLabel(f), date:f.kickoff?f.kickoff.slice(0,10):"", fixture_id:f.id, comp:"Premier League"};
   showAddPred=true; go("predictions");
 }
+let NFIL="all", NSHOW=40;
+function setNFil(k){ NFIL=k; NSHOW=40; render(); }
+function vNews(){
+  const all=(DB.news||[]);
+  const auto=all.filter(n=>n.uid), notes=all.filter(n=>!n.uid);
+  const mine=new Set([...(BOARD&&BOARD.plays||[]).flatMap(p=>String(p.match||"").split(" vs ")),
+    ...(DB.ledger||[]).filter(b=>!b.result).flatMap(b=>String(b.match||"").split(" vs "))].map(s=>s.trim()).filter(Boolean));
+  const rel=n=>(n.teams||[]).some(t=>mine.has(t));
+  let feed=auto.filter(n=>NFIL==="all"||n.kind===NFIL||n.tag===NFIL);
+  feed.sort((a,b)=>String(b.published_at||b.item_date||"").localeCompare(String(a.published_at||a.item_date||"")));
+  feed=[...feed.filter(rel),...feed.filter(n=>!rel(n))];
+  const counts={}; for(const n of auto) counts[n.kind||n.tag||"other"]=(counts[n.kind||n.tag||"other"]||0)+1;
+  const ico={injury:"&#9888;",transfer:"&#8644;",manager:"&#9873;",suspension:"&#9940;"};
+  const col={injury:"var(--red)",transfer:"var(--blue)",manager:"var(--purple)",suspension:"var(--accent)"};
+  const ago=d=>{if(!d)return "";const m=Math.round((Date.now()-new Date(d).getTime())/60000);return m<60?m+"m ago":m<1440?Math.round(m/60)+"h ago":Math.round(m/1440)+"d ago";};
+  const up=DB.predictions.filter(p=>!p.outcome);
+  return `
+  <div class="grid" style="grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:0">
+    ${[["injury","injuries","var(--red)"],["transfer","transfers","var(--blue)"],["manager","manager news","var(--purple)"],["suspension","suspensions","var(--accent)"]].map(([k,lab,c])=>
+      `<div class="panel" style="margin:0;border-left:3px solid ${c};border-radius:0 10px 10px 0;padding:12px 14px;cursor:pointer" onclick="setNFil('${k}')">
+        <div style="font-size:11px;letter-spacing:.06em;color:#5d6879">${lab}</div>
+        <div class="num" style="font-size:24px;font-weight:500;line-height:1.25">${counts[k]||0}</div>
+        <div class="small" style="color:#5d6879">last 45 days</div></div>`).join("")}
+  </div>
+  <div class="panel" style="padding:0;overflow:hidden">
+    <div class="flex" style="padding:13px 16px 8px"><h2 style="margin:0;font-size:16px">Live feed</h2>
+      <span class="right flex" style="gap:4px">
+        ${["all","injury","transfer","manager","suspension"].map(k=>`<button class="btn ghost sm" style="padding:3px 9px;${NFIL===k?"border-color:var(--accent);color:var(--accent)":""}" onclick="setNFil('${k}')">${k}</button>`).join("")}
+        <button class="btn ghost sm" onclick="pullNews()">&#8635; pull now</button></span></div>
+    <div class="small" style="padding:0 16px 8px;color:#5d6879">BBC, Sky and Guardian, refreshed hourly. Clubs we have a play on are pinned to the top.</div>
+    ${feed.length?feed.slice(0,NSHOW).map(n=>`<div style="border-top:1px solid var(--border);padding:10px 16px;${rel(n)?"background:#101825":""}">
+      <div class="flex" style="gap:9px;align-items:flex-start">
+        <span style="color:${col[n.kind]||"var(--muted)"};font-size:14px;width:17px;text-align:center">${ico[n.kind]||"&#8226;"}</span>
+        <span style="flex:1;min-width:0">
+          <a href="${esc(n.link||"#")}" target="_blank" rel="noopener" style="color:var(--text);text-decoration:none;font-size:14px">${esc(n.headline)}</a>
+          ${n.body?`<p class="small muted" style="margin:3px 0 0;line-height:1.6">${esc(String(n.body).slice(0,240))}</p>`:""}
+          <div class="flex" style="gap:6px;margin-top:5px">
+            ${(n.teams||[]).slice(0,4).map(t=>`<span style="font-size:11px;background:${mine.has(t)?"rgba(245,185,66,.15)":"#1b2432"};color:${mine.has(t)?"var(--accent)":"#5d6879"};padding:1px 8px;border-radius:20px">${esc(t)}</span>`).join("")}
+            <span style="font-size:11px;color:#4d5766">${esc(n.source||"")} · ${ago(n.published_at||n.item_date)}</span>
+            ${rel(n)?'<span style="font-size:11px;color:var(--accent)">· we have a play here</span>':""}
+          </div></span></div></div>`).join("")
+      :'<p class="muted small" style="padding:14px 16px">Nothing in this category yet.</p>'}
+    ${feed.length>NSHOW?`<div style="border-top:1px solid var(--border);padding:9px 16px"><button class="btn ghost sm" onclick="NSHOW+=40;render()">show more (${feed.length-NSHOW} left)</button></div>`:""}
+  </div>
+  <div class="panel"><div class="flex"><h2>My notes</h2><button class="btn sm right" onclick="showAddNews=!showAddNews;render()">${showAddNews?"Cancel":"+ Add note"}</button></div>
+  ${showAddNews?`<div class="formrow">
+    <label>Date<input id="nw_date" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
+    <label>Tag<select id="nw_tag"><option>injury</option><option>lineup</option><option>presser</option><option>other</option></select></label>
+    <label>Attach to match<select id="nw_pred"><option value="">—</option>${up.map(p=>`<option value="${p.id}">${esc(p.match)}</option>`).join("")}</select></label>
+    <label>Headline<input id="nw_head" style="width:300px"></label>
+    <label>Detail<input id="nw_body" style="width:300px"></label>
+    <button class="btn sm" onclick="addNews()">Save</button></div>`:""}
+  ${notes.length?notes.map(n=>{const p=DB.predictions.find(x=>x.id===n.prediction_id);
+    return `<div class="detail"><span class="tag ${n.tag==='injury'?'miss':n.tag==='lineup'?'watch':'pend'}">${esc(n.tag||"note")}</span> <b>${esc(n.headline)}</b> <span class="muted small">${n.item_date||""}${p?" · "+esc(p.match):""}</span>${n.body?`<p class="small muted" style="margin-top:4px">${esc(n.body)}</p>`:""} <button class="btn ghost sm" style="float:right" onclick="delNews(${n.id})">&#10005;</button></div>`}).join("")
+    :'<p class="muted small">Nothing saved. Use this for things the feeds miss — presser notes, a tip, your own read on a lineup.</p>'}
+  </div>`;
+}
+async function pullNews(){
+  toast("Pulling feeds…");
+  try{ const r=await fetch(SB_URL+"/functions/v1/sync-news",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY}});
+    const d=await r.json(); toast("Feeds pulled: "+(d.matched||0)+" relevant items"); loadAll();
+  }catch(e){ toast("Pull failed — hourly sync still runs",false); }
+}
 function vFixtures(){
   if(CAL===null&&!CALreq){CALreq=true;ensureCalendar().then(()=>{if(TAB==="fixtures")render();}).catch(()=>{});}
   const up = DB.predictions.filter(p=>!p.outcome);
@@ -1463,27 +1527,7 @@ function vFixtures(){
   ${up.map(p=>`<tr><td class="num">${p.match_date||"—"}</td><td><b>${esc(p.match)}</b></td><td class="muted">${esc(p.venue||"—")}</td><td>${p.is_avoid?'<span class="tag avoid">AVOID</span>':esc(p.pick||"not called yet")}</td><td class="stars">${starstr(p.stars)}</td>
   <td>${p.lineup_watch?`<span class="tag watch">👁 LINEUP WATCH</span> <span class="small muted">${esc(p.lineup_watch_note||"")}</span>`:'<span class="tag pend">OPEN</span>'}</td></tr>`).join("")}</table>`:'<p class="muted">No open fixtures. Add one from the Prediction Log tab (it can start with no pick).</p>'}
   </div>
-  ${(()=>{
-    if(NEWS===null&&!NEWSREQ){NEWSREQ=true;fetch(SB_URL+"/functions/v1/sync-news").then(r=>r.json()).then(d=>{NEWS=d.items||[];if(TAB==="fixtures")render();}).catch(()=>{NEWS=[];});}
-    const items=(NEWS||[]).filter(n=>!NEWSINJ||n.injury).slice(0,15);
-    return `<div class="panel"><div class="flex"><h2>Live Feeds — BBC & Sky</h2>
-    <label class="small muted right" style="display:flex;align-items:center;gap:6px"><input type="checkbox" ${NEWSINJ?"checked":""} onchange="NEWSINJ=this.checked;render()" style="width:16px;height:16px"> injuries/availability only</label></div>
-    ${NEWS===null?'<p class="muted small">Loading feeds…</p>':items.length?items.map((n,i)=>`<div class="detail" style="padding:8px 12px"><div class="flex">
-      ${n.injury?'<span class="tag miss">INJ</span>':""}<span class="tag pend">${esc(n.src)}</span>
-      <a href="${esc(n.link)}" target="_blank" style="color:var(--text);text-decoration:none"><b class="small">${esc(n.title)}</b></a>
-      <button class="btn ghost sm right" onclick="saveFeedItem(${(NEWS||[]).indexOf(n)})">💾 Save</button></div>
-      ${n.desc?`<p class="small muted" style="margin-top:4px">${esc(n.desc)}</p>`:""}</div>`).join(""):'<p class="muted small">No items match.</p>'}
-    </div>`;})()}
-  <div class="panel"><div class="flex"><h2>Saved News & Notes</h2><button class="btn sm right" onclick="showAddNews=!showAddNews;render()">${showAddNews?"Cancel":"+ Add item"}</button></div>
-  ${showAddNews?`<div class="formrow">
-    <label>Date<input id="nw_date" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
-    <label>Tag<select id="nw_tag"><option>injury</option><option>lineup</option><option>presser</option><option>other</option></select></label>
-    <label>Attach to match<select id="nw_pred"><option value="">—</option>${up.map(p=>`<option value="${p.id}">${esc(p.match)}</option>`).join("")}</select></label>
-    <label>Headline<input id="nw_head" style="width:300px"></label>
-    <label>Detail<input id="nw_body" style="width:300px"></label>
-    <button class="btn sm" onclick="addNews()">Save</button></div>`:""}
-  ${DB.news.length?DB.news.map(n=>{const p=DB.predictions.find(x=>x.id===n.prediction_id);return `<div class="detail"><span class="tag ${n.tag==='injury'?'miss':n.tag==='lineup'?'watch':'pend'}">${esc(n.tag||"note")}</span> <b>${esc(n.headline)}</b> <span class="muted small">${n.item_date||""}${p?" · "+esc(p.match):""}</span>${n.body?`<p class="small muted" style="margin-top:4px">${esc(n.body)}</p>`:""} <button class="btn ghost sm" style="float:right" onclick="delNews(${n.id})">✕</button></div>`}).join(""):'<p class="muted">No news items yet. Injury news, lineup confirmations, presser notes — tagged to matches.</p>'}
-  </div>`;
+  <p class="small muted">News moved to its own tab — see <b>News</b> in the top nav.</p>`;
 }
 let NEWS=null, NEWSREQ=false, NEWSINJ=false;
 async function saveFeedItem(i){
