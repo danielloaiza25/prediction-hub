@@ -152,7 +152,7 @@ const outcomeTag = o => !o?'<span class="tag pend">PENDING</span>':o==="HIT"?'<s
 const GROUPS = [
   {id:"dashboard", label:"Dashboard", tabs:[["dashboard","Dashboard"]]},
   {id:"news",      label:"News",      tabs:[["news","Live feed & notes"]]},
-  {id:"preds",     label:"Predictions", tabs:[["engine","Engine Picks"],["predictions","Archive (manual log)"],["ledger","Bet Ledger"],["autopsies","Autopsies"]]},
+  {id:"preds",     label:"Predictions", tabs:[["engine","Engine Picks"],["bankroll","Bankroll"],["predictions","Archive (manual log)"],["ledger","Bet Ledger"],["autopsies","Autopsies"]]},
   {id:"league",    label:"League",    tabs:[["pltable","Table & Team Profiles"],["fixtures","Matchweek detail"],["inplay","In-Play Card"],["venues","Venues (AIS)"]]},
   {id:"squads",    label:"Scouting Report", tabs:[["scout","Clubs"],["players","Players (PRS)"],["coaches","Coaches (TMS)"]]},
   {id:"tools",     label:"Tools",     tabs:[["calculator","Calculator"],["data","Import / Export"]]},
@@ -178,6 +178,7 @@ function render(){
   else if(TAB==="predictions") m.innerHTML=vPredictions();
   else if(TAB==="fixtures") m.innerHTML=vFixtures();
   else if(TAB==="news") m.innerHTML=vNews();
+  else if(TAB==="bankroll") m.innerHTML=vBankroll();
   else if(TAB==="pltable"){renderPLTable();return;}
   else if(TAB==="autopsies"){renderAutopsies();return;}
   else if(TAB==="ledger") m.innerHTML=vLedger();
@@ -690,7 +691,10 @@ function vSimpleDashboard(){
   const pnl=settled.reduce((a,b)=>a+((+b.payout||0)-(+b.stake||0)),0);
   const open=L.filter(b=>!b.result);
   const riding=open.reduce((a,b)=>a+(+b.stake||0),0);
-  const bank=(+((DB.settings||{}).bankroll)||1000)+pnl;
+  if(CASH===null){CASH=[];api("cash_flows?select=*&order=flow_date.asc,id.asc").then(r=>{CASH=r;if(TAB==="dashboard")render();}).catch(()=>{});}
+  const _fl=(CASH||[]);
+  const _base=_fl.length?_fl.reduce((a,f)=>a+(f.kind==="withdrawal"?-+f.amount:+f.amount),0):(+((DB.settings||{}).bankroll)||1000);
+  const bank=_base+pnl;
   const alerts=DB.players.filter(p=>p.prs>=8&&p.status&&p.status!=="fit"&&p.status!=="unavailable").slice(0,2);
   const plays=(BOARD&&BOARD.plays||[]).filter(p=>p.our!=null&&p.type!=="live").sort((a,b)=>(b.ev??-99)-(a.ev??-99)).slice(0,10);
   const isLogged=p=>open.some(b=>b.match===p.match&&b.side===p.bet);
@@ -725,8 +729,8 @@ function vSimpleDashboard(){
   ${alerts.length?`<div class="panel" style="margin-top:10px;border-color:var(--red);padding:8px 12px">
     ${alerts.map(p=>`<span class="small">⚠ <b>${esc(p.name)}</b> (${esc(p.team)}, PRS ${p.prs}) ${esc(p.status)} — wait for lineups before betting ${esc(p.team)}</span>`).join("<br>")}</div>`:""}
   <div class="grid" style="grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:10px">
-    <div class="panel" style="margin:0;border-left:3px solid var(--green);border-radius:0 10px 10px 0;padding:12px 14px">
-      <div style="font-size:11px;letter-spacing:.06em;color:#5d6879">bankroll</div>
+    <div class="panel rowbtn" style="margin:0;border-left:3px solid var(--green);border-radius:0 10px 10px 0;padding:12px 14px;cursor:pointer" onclick="go('bankroll')">
+      <div style="font-size:11px;letter-spacing:.06em;color:#5d6879">bankroll <span style="float:right;color:#4d5766">&#8250;</span></div>
       <div class="num" style="font-size:24px;font-weight:500;line-height:1.25">$${bank.toFixed(0)}</div>
       <div class="small ${pnl>=0?"pos":"neg"}">${pnl>=0?"+":""}$${pnl.toFixed(0)} · ${((pnl/((bank-pnl)||1))*100).toFixed(1)}%</div>
       ${spark}</div>
@@ -1512,6 +1516,95 @@ async function pullNews(){
   try{ const r=await fetch(SB_URL+"/functions/v1/sync-news",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+SB_KEY}});
     const d=await r.json(); toast("Feeds pulled: "+(d.matched||0)+" relevant items"); loadAll();
   }catch(e){ toast("Pull failed — hourly sync still runs",false); }
+}
+let CASH=null, CASHFORM=null;
+function vBankroll(){
+  if(CASH===null){CASH=[];api("cash_flows?select=*&order=flow_date.asc,id.asc").then(r=>{CASH=r;if(TAB==="bankroll")render();}).catch(()=>{});}
+  const L=(DB.ledger||[]).slice().sort((a,b)=>String(a.placed_at||"").localeCompare(String(b.placed_at||"")));
+  const settled=L.filter(b=>b.result==="win"||b.result==="lose");
+  const open=L.filter(b=>!b.result);
+  const staked=settled.reduce((a,b)=>a+ +b.stake,0);
+  const pnl=settled.reduce((a,b)=>a+((+b.payout||0)-(+b.stake||0)),0);
+  const wins=settled.filter(b=>b.result==="win").length;
+  const flows=(CASH||[]);
+  const start=flows.filter(f=>f.kind==="start").reduce((a,f)=>a+ +f.amount,0)||1000;
+  const deps=flows.filter(f=>f.kind==="deposit").reduce((a,f)=>a+ +f.amount,0);
+  const wds=flows.filter(f=>f.kind==="withdrawal").reduce((a,f)=>a+ +f.amount,0);
+  const bank=start+deps-wds+pnl;
+  const roi=staked?(100*pnl/staked):0;
+  // event stream for chart: flows + settled bets in date order
+  const ev=[...flows.map(f=>({d:f.flow_date,amt:f.kind==="withdrawal"?-f.amount:+f.amount,flow:f.kind})),
+            ...settled.map(b=>({d:String(b.placed_at||"").slice(0,10),amt:(+b.payout||0)-(+b.stake||0),flow:null}))]
+    .sort((a,b)=>String(a.d).localeCompare(String(b.d)));
+  let run=0; const pts=ev.map(e=>{run+=e.amt;return {v:run,flow:e.flow,d:e.d};});
+  const chart=(()=>{
+    if(pts.length<2)return '<p class="small muted" style="margin:6px 0 0">The line draws itself as bets settle — right now there is only the starting point.</p>';
+    const vals=pts.map(p=>p.v), mx=Math.max(...vals), mn=Math.min(...vals), rg=(mx-mn)||1;
+    const X=i=>(i/(pts.length-1)*620+10).toFixed(1), Y=v=>(96-((v-mn)/rg)*78).toFixed(1);
+    const startY=Y(start);
+    return `<svg viewBox="0 0 640 112" style="width:100%;height:112px">
+      <line x1="0" y1="${startY}" x2="640" y2="${startY}" stroke="#26303f" stroke-width="1" stroke-dasharray="4 4"/>
+      <text x="4" y="${+startY-4}" fill="#4d5766" font-size="10">$${start.toFixed(0)} start</text>
+      <polyline points="${pts.map((p,i)=>X(i)+","+Y(p.v)).join(" ")}" fill="none" stroke="${run>=start?"var(--green)":"var(--red)"}" stroke-width="2.5"/>
+      ${pts.map((p,i)=>p.flow==="deposit"?`<path d="M${X(i)} ${+Y(p.v)+10} l5 -8 l-10 0 z" fill="var(--blue)"/>`:p.flow==="withdrawal"?`<path d="M${X(i)} ${+Y(p.v)-10} l5 8 l-10 0 z" fill="var(--accent)"/>`:"").join("")}
+    </svg>
+    <p class="small" style="color:#4d5766;margin:2px 0 0">&#9650; blue = money added &nbsp; &#9660; amber = money taken out — the line moves, but profit does not.</p>`;
+  })();
+  const bucket=m=>{m=String(m||"").toLowerCase();return m.indexOf("combo")>=0?"combos":m.indexOf("btts")>=0?"both to score":(m.indexOf("over")>=0||m.indexOf("under")>=0||m.indexOf("goal")>=0)?"over/under":"winners";};
+  const BT={};
+  for(const b of settled){const k=bucket(b.market||b.side);(BT[k]||(BT[k]={p:0,s:0,w:0,n:0}));BT[k].p+=((+b.payout||0)-(+b.stake||0));BT[k].s+=+b.stake;BT[k].w+=(b.result==="win"?1:0);BT[k].n++;}
+  const typeRows=Object.keys(BT).length?Object.entries(BT).map(([k,o])=>`<div class="flex small" style="padding:5px 0;border-bottom:1px solid #1a2230">
+      <span style="flex:1">${k}</span>
+      <b class="num ${o.p>=0?"pos":"neg"}">${o.p>=0?"+":"&#8722;"}$${Math.abs(o.p).toFixed(0)}</b>
+      <span class="muted">roi ${o.s?(o.p>=0?"+":"")+(100*o.p/o.s).toFixed(0)+"%":"—"} · ${o.w}-${o.n-o.w}</span></div>`).join("")
+    :'<p class="small muted">Settles land here split by market — the first one draws the first row.</p>';
+  const flowRows=flows.slice().reverse().map(f=>`<div class="flex small" style="padding:4px 0;border-bottom:1px solid #1a2230">
+      <span class="muted">${f.flow_date} · ${f.kind==="start"?"starting bankroll":f.kind}</span>
+      <span class="right num" style="color:${f.kind==="withdrawal"?"var(--accent)":f.kind==="deposit"?"var(--blue)":"var(--text)"}">${f.kind==="withdrawal"?"&#8722;":f.kind==="deposit"?"+":""}$${(+f.amount).toFixed(0)}</span>
+      ${f.kind!=="start"?`<button class="btn ghost sm" style="padding:1px 7px" onclick="delFlow(${f.id})">&#10005;</button>`:""}</div>`).join("");
+  const allRows=[...L].reverse();
+  return `
+  <div class="grid" style="grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:0">
+    <div class="panel" style="margin:0;border-left:3px solid var(--green);border-radius:0 10px 10px 0;padding:12px 14px"><div style="font-size:11px;letter-spacing:.06em;color:#5d6879">bankroll</div><div class="num" style="font-size:24px;font-weight:500">$${bank.toFixed(0)}</div><div class="small" style="color:#5d6879">$${start.toFixed(0)} start${deps?" + $"+deps.toFixed(0)+" added":""}${wds?" &#8722; $"+wds.toFixed(0)+" out":""}</div></div>
+    <div class="panel" style="margin:0;border-left:3px solid var(--green);border-radius:0 10px 10px 0;padding:12px 14px"><div style="font-size:11px;letter-spacing:.06em;color:#5d6879">betting profit</div><div class="num ${pnl>=0?"pos":"neg"}" style="font-size:24px;font-weight:500">${pnl>=0?"+":"&#8722;"}$${Math.abs(pnl).toFixed(0)}</div><div class="small" style="color:#5d6879">deposits not counted</div></div>
+    <div class="panel" style="margin:0;border-left:3px solid var(--accent);border-radius:0 10px 10px 0;padding:12px 14px"><div style="font-size:11px;letter-spacing:.06em;color:#5d6879">roi</div><div class="num" style="font-size:24px;font-weight:500">${staked?(roi>=0?"+":"")+roi.toFixed(1)+"%":"—"}</div><div class="small" style="color:#5d6879">per dollar staked</div></div>
+    <div class="panel" style="margin:0;border-left:3px solid var(--blue);border-radius:0 10px 10px 0;padding:12px 14px"><div style="font-size:11px;letter-spacing:.06em;color:#5d6879">win rate</div><div class="num" style="font-size:24px;font-weight:500">${settled.length?Math.round(100*wins/settled.length)+"%":"—"}</div><div class="small" style="color:#5d6879">${wins}-${settled.length-wins} settled · ${open.length} open</div></div>
+  </div>
+  <div class="panel"><div class="flex"><h2>Bankroll over time</h2><span class="small right" style="color:#4d5766">dashed line = starting point</span></div>${chart}</div>
+  <div class="grid" style="grid-template-columns:1.2fr 1fr;gap:12px;margin-top:12px">
+    <div class="panel" style="margin:0"><h2>Where the money comes from</h2>${typeRows}</div>
+    <div class="panel" style="margin:0"><div class="flex"><h2>Money in and out</h2>
+      <span class="right"><button class="btn ghost sm" onclick="CASHFORM=CASHFORM==='deposit'?null:'deposit';render()">+ add</button>
+      <button class="btn ghost sm" onclick="CASHFORM=CASHFORM==='withdrawal'?null:'withdrawal';render()">&#8722; withdraw</button></span></div>
+      ${CASHFORM?`<div class="flex" style="gap:8px;margin:4px 0 8px;background:#0b1119;padding:8px 10px;border-radius:8px">
+        <span class="small muted">${CASHFORM==="deposit"?"I added $":"I took out $"}</span>
+        <input id="cf_amt" type="number" style="width:80px;padding:4px 8px">
+        <button class="btn sm" onclick="addFlow('${CASHFORM}')">save</button></div>`:""}
+      ${flowRows}
+      <p class="small" style="color:#4d5766;margin:8px 0 0">Kept separate from betting profit on purpose — adding money never looks like winning.</p></div>
+  </div>
+  <div class="panel" style="padding:0;overflow:hidden">
+    <div style="padding:13px 16px 8px"><h2 style="margin:0">Every bet</h2></div>
+    <div class="flex small" style="padding:4px 16px;border-bottom:1px solid var(--border);color:#5d6879;gap:6px">
+      <span style="flex:1">bet</span><span style="width:56px;text-align:right">stake</span><span style="width:50px;text-align:right">odds</span><span style="width:56px;text-align:right">result</span><span style="width:64px;text-align:right">profit</span></div>
+    ${allRows.length?allRows.map(b=>{const pr=b.result?((+b.payout||0)-(+b.stake||0)):null;
+      return `<div class="flex small" style="padding:7px 16px;border-bottom:1px solid #141b26;gap:6px;align-items:center">
+      <span style="flex:1;min-width:0"><span style="color:var(--text)">${esc(b.side||"")}</span> <span class="muted">${esc(String(b.match||"").slice(0,44))}</span>${(b.notes||"").includes("combo")?' <span style="font-size:10px;letter-spacing:.06em;background:rgba(167,139,250,.18);color:var(--purple);padding:1px 6px;border-radius:20px">COMBO</span>':""}</span>
+      <span class="num" style="width:56px;text-align:right">$${(+b.stake).toFixed(0)}</span>
+      <span class="num muted" style="width:50px;text-align:right">${b.price_cents?(100/b.price_cents).toFixed(2)+"x":"—"}</span>
+      <span style="width:56px;text-align:right;color:${b.result==="win"?"var(--green)":b.result==="lose"?"var(--red)":"#4d5766"}">${b.result==="win"?"won":b.result==="lose"?"lost":"open"}</span>
+      <span class="num" style="width:64px;text-align:right;color:${pr==null?"#4d5766":pr>=0?"var(--green)":"var(--red)"}">${pr==null?"—":(pr>=0?"+":"&#8722;")+"$"+Math.abs(pr).toFixed(0)}</span></div>`;}).join("")
+    :'<p class="muted small" style="padding:12px 16px">Bets you log from the dashboard land here.</p>'}
+  </div>`;
+}
+async function addFlow(kind){
+  const amt=+(document.getElementById("cf_amt")||{}).value;
+  if(!amt||amt<=0){toast("Type an amount first",false);return;}
+  try{ await api("cash_flows",{method:"POST",body:{kind,amount:amt}}); CASHFORM=null; CASH=null; toast(kind==="deposit"?"Added $"+amt:"Withdrew $"+amt); render(); }
+  catch(e){toast(e.message,false)}
+}
+async function delFlow(id){ if(!confirm("Remove this entry?"))return;
+  try{ await api("cash_flows?id=eq."+id,{method:"DELETE"}); CASH=null; render(); }catch(e){toast(e.message,false)}
 }
 function vFixtures(){
   if(CAL===null&&!CALreq){CALreq=true;ensureCalendar().then(()=>{if(TAB==="fixtures")render();}).catch(()=>{});}
