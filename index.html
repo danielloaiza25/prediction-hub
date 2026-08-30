@@ -106,7 +106,9 @@ const H = {apikey:SB_KEY, Authorization:"Bearer "+SB_KEY, "Content-Type":"applic
 async function api(path, opts={}){
   const r = await fetch(SB_URL+"/rest/v1/"+path, {headers:{...H, ...(opts.headers||{})}, method:opts.method||"GET", body:opts.body?JSON.stringify(opts.body):undefined});
   if(!r.ok){ const t=await r.text(); throw new Error(r.status+" "+t); }
-  return r.status===204?null:r.json();
+  const t=await r.text();
+  if(!t) return null;
+  try{ return JSON.parse(t); }catch(_){ return null; }
 }
 
 let EXPERT = localStorage.getItem("expert")==="1";
@@ -880,6 +882,7 @@ async function quickLogCombo(ci){
 }
 async function quickLog(i){
   const p=(BOARD&&BOARD.plays||[])[i]; if(!p)return;
+  if((DB.ledger||[]).some(b=>!b.result&&b.match===p.match&&b.side===p.bet)){toast("Already logged — see riding now",false);return;}
   const sv=document.getElementById("dv_"+i), mv=document.getElementById("dm_"+i);
   const stake=+(sv&&sv.value), mult=+(mv&&mv.value);
   if(!stake||stake<=0){toast("Type how much you bet first",false);return;}
