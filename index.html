@@ -851,45 +851,12 @@ function vSimpleDashboard(){
     })()}
     ${(DNEWS||[]).length>8?`<div style="border-top:1px solid var(--border);padding:8px 16px"><button class="btn ghost sm" onclick="DNEWSMORE=!DNEWSMORE;render()">${DNEWSMORE?"show less":"show more"}</button></div>`:""}
   </div>
-  ${(()=>{ if(VERDS===null){VERDS=[];api("verdicts?select=*&order=mw.desc,locked_at.desc&limit=250").then(r=>{VERDS=r;if(TAB==="dashboard")render();}).catch(()=>{});} return ""; })()}
-  <div class="panel" style="padding:0;overflow:hidden">
-    <div class="flex" style="padding:13px 16px 8px"><h2 style="margin:0;font-size:16px">My call record</h2>
-      <span class="small right" style="color:#5d6879">a NO is graded too — on whether it would have won</span></div>
-    ${(()=>{
-      const V=(VERDS||[]).filter(v=>v.correct!=null);
-      const seg=(f)=>{const s=V.filter(f);return {n:s.length,c:s.filter(v=>v.correct).length};};
-      const y=seg(v=>v.verdict==="YES"&&v.kind==="single"), n=seg(v=>v.verdict==="NO"&&v.kind==="single");
-      const cy=seg(v=>v.verdict==="YES"&&v.kind==="combo"), cn=seg(v=>v.verdict==="NO"&&v.kind==="combo");
-      const mws=[...new Set((VERDS||[]).map(v=>v.mw))].sort((a,b)=>b-a).slice(0,6);
-      const line=(lab,o,col)=>{const p=o.n?Math.round(100*o.c/o.n):0;
-        return `<div class="flex" style="gap:8px;margin-bottom:6px;align-items:center">
-          <span class="small" style="width:118px">${lab}</span>
-          <div style="flex:1;height:9px;background:#0b1119;border-radius:5px;overflow:hidden"><div style="width:${p}%;height:9px;background:${o.n?col:"var(--border)"};border-radius:5px"></div></div>
-          <span class="small num" style="width:86px;text-align:right">${o.n?p+"%":"—"} <span class="muted" style="font-size:11px">${o.c}-${o.n-o.c}</span></span></div>`;};
-      return `<div style="padding:10px 16px 4px">
-        ${line("YES calls",y,"var(--green)")}${line("NO calls",n,"var(--blue)")}
-        ${line("combo YES",cy,"var(--purple)")}${line("combo NO",cn,"var(--purple)")}
-        <p class="small" style="margin:2px 0 8px;color:#5d6879">${V.length?V.length+" calls graded so far. Ungraded: "+((VERDS||[]).length-V.length)+".":"Nothing graded yet — calls grade as matches finish."}</p>
-      </div>
-      ${mws.length?`<div style="border-top:1px solid var(--border);padding:9px 16px">
-        <span class="small" style="color:#5d6879">matchday reports: </span>
-        ${mws.map(m=>{const s=(VERDS||[]).filter(v=>v.mw===m);const g=s.filter(v=>v.correct!=null);
-          return `<button class="btn ghost sm" style="margin:2px 3px;${VMW===m?"border-color:var(--accent);color:var(--accent)":""}" onclick="VMW=(VMW===${m}?null:${m});render()">MW${m} <span class="muted">${g.length}/${s.length}</span></button>`;}).join("")}
-      </div>`:""}
-      ${VMW!=null?`<div style="border-top:1px solid var(--border);padding:10px 16px">
-        ${(VERDS||[]).filter(v=>v.mw===VMW).map(v=>`<div style="padding:7px 0;border-bottom:1px solid #141b26">
-          <div class="flex" style="gap:8px;align-items:center">
-            <span style="border-radius:20px;padding:2px 10px;font-size:11.5px;background:${v.verdict==="YES"?"rgba(46,204,113,.16)":"rgba(231,76,91,.14)"};color:${v.verdict==="YES"?"var(--green)":"var(--red)"}">${v.verdict}</span>
-            ${v.kind==="combo"?'<span style="font-size:10.5px;letter-spacing:.08em;background:rgba(167,139,250,.18);color:var(--purple);padding:2px 7px;border-radius:20px">COMBO</span>':""}
-            <span style="flex:1;font-size:13px">${esc(v.bet)} <span class="muted" style="font-size:12px">${esc(v.match)}</span></span>
-            <span class="num small muted">${v.our_prob}%</span>
-            <span class="small" style="width:74px;text-align:right;color:${v.correct==null?"#4d5766":v.correct?"var(--green)":"var(--red)"}">${v.correct==null?"pending":v.correct?"right":"wrong"}</span>
-          </div>
-          ${v.result?`<div class="small" style="color:#5d6879;margin-top:3px">outcome: ${esc(v.result)}${v.verdict==="NO"?(v.would_have_hit?" — it would have won, so this NO is a miss":" — it would have lost, so passing was right"):""}</div>`:""}
-        </div>`).join("")||'<p class="small muted">No calls stored for that matchweek.</p>'}
-      </div>`:""}`;
-    })()}
-  </div>
+  ${(()=>{ if(VERDS===null){VERDS=[];api("verdicts?select=*&order=mw.desc,locked_at.desc&limit=250").then(r=>{VERDS=r;if(TAB==="dashboard")render();}).catch(()=>{});} 
+    const V=(VERDS||[]).filter(v=>v.correct!=null);
+    const y=V.filter(v=>v.verdict==="YES"), n=V.filter(v=>v.verdict==="NO");
+    return `<div class="panel rowbtn" style="cursor:pointer;padding:11px 16px" onclick="go('engine')">
+      <div class="flex"><span class="small"><b>My call record</b> — YES ${y.filter(v=>v.correct).length}-${y.filter(v=>!v.correct).length} · NO ${n.filter(v=>v.correct).length}-${n.filter(v=>!v.correct).length}${V.length?"":" · nothing graded yet"}</span>
+      <span class="small right" style="color:var(--accent)">full record &amp; matchday reports &rarr;</span></div></div>`; })()}
   <div class="panel"><div class="flex"><h2>How good am I, by bet type</h2>
     <span class="small muted right">${Object.values(S).reduce((a,o)=>a+o.t,0)} graded · paper + real</span></div>
     ${barRow("winner",S.winner)}${barRow("over/under",S.goals)}${barRow("both to score",S.btts)}${barRow("combos",S.combo)}
@@ -1114,72 +1081,135 @@ async function renderEngine(){
   try{ PAPERS=await api("paper_picks?select=*&order=kickoff.desc&limit=120"); }catch(e){ m.innerHTML='<p class="neg">'+esc(e.message)+'</p>'; return; }
   m.innerHTML=vEngine(); window.scrollTo(0,0);
 }
+let EPTAB="now", EPREP=null;
 function vEngine(){
   const P=PAPERS||[];
+  if(VERDS===null){VERDS=[];api("verdicts?select=*&order=locked_at.desc&limit=300").then(r=>{VERDS=r;if(TAB==="engine")render();}).catch(()=>{});}
+  const fxEv={}; for(const f of (DB.plf||[])) fxEv[f.id]=+f.event||0;
   const graded=P.filter(p=>p.settled&&(p.outcomes||[]).length);
-  const allO=graded.flatMap(p=>p.outcomes);
-  const hits=allO.filter(o=>o.result==="HIT").length;
-  const byType={};
-  for(const o of allO){ const t=byType[o.market]=byType[o.market]||{h:0,n:0}; t.n++; if(o.result==="HIT")t.h++; }
-  const hi=allO.filter(o=>o.prob>=60), hiH=hi.filter(o=>o.result==="HIT").length;
-  const roi=allO.length?allO.reduce((a,o)=>a+((o.result==="HIT"?(100/((o.prob-5)||50)*((o.prob-5)/100)*100):0)),0):0;
-  const wroi=allO.length?(allO.reduce((a,o)=>{const pr=(o.prob-5)/100;return a+(o.result==="HIT"?(1/pr-1):-1);},0)/allO.length*100):null;
   const passes=P.filter(p=>p.settled&&!(p.outcomes||[]).length);
-  const passRight=passes.filter(p=>String(p.analysis||"").includes("looks right")).length;
-  return `
-  <div class="flex"><h2 style="color:var(--accent);text-transform:uppercase;font-size:14px;letter-spacing:1px">Engine Picks — the shadow book</h2>
-  <span class="right small muted">every match gets a call · graded automatically · nothing staked</span></div>
-  <div class="grid cards" style="margin-top:10px">
-    ${card("Picks graded",allO.length,graded.length+" matches")}
-    ${card("Hit rate",allO.length?Math.round(100*hits/allO.length)+"%":"—",Object.entries(byType).map(([t,v])=>t+" "+v.h+"/"+v.n).join(" · ")||"—")}
-    ${card("Said 60%+, hit",hi.length?Math.round(100*hiH/hi.length)+"%":"—",hi.length+" confident calls — calibration check")}
-    ${card("Would-be ROI",wroi==null?"—":((wroi>0?"+":"")+wroi.toFixed(0)+"%"),"flat $1 at our max prices")}
-    ${card("Passes",passes.length,passes.length?passRight+" look right":"skipping is a graded choice")}
+  const openP=P.filter(p=>!p.settled&&(p.picks||[]).length);
+  const allO=graded.flatMap(p=>(p.outcomes||[]).map(o=>({...o,_k:p.kickoff,_mw:fxEv[p.fixture_id]||0})));
+  const hits=allO.filter(o=>o.result==="HIT").length;
+  const pct=allO.length?Math.round(100*hits/allO.length):null;
+  const NAMES={over:"over/under",under:"over/under",winner:"winner",no:"winner",btts:"both score",combo:"combos"};
+  const BT={};
+  for(const o of allO){const k=NAMES[o.market]||o.market||"other";(BT[k]||(BT[k]={h:0,n:0}));BT[k].n++;if(o.result==="HIT")BT[k].h++;}
+  const wb=o=>{const mp=o.max_price||(o.prob?o.prob-5:50);return o.result==="HIT"?(10*100/mp-10):-10;};
+  const dollars=allO.reduce((a,o)=>a+wb(o),0);
+  const conf=allO.filter(o=>o.prob>=60);
+  const confHit=conf.filter(o=>o.result==="HIT").length;
+  const confAvg=conf.length?Math.round(conf.reduce((a,o)=>a+o.prob,0)/conf.length):0;
+  const honesty=conf.length>=4?`when I say ${confAvg}%, those land ${Math.round(100*confHit/conf.length)}%`
+    :"too few calls to judge my honesty yet";
+  const chron=allO.slice().sort((a,b)=>String(a._k).localeCompare(String(b._k)));
+  const dots=chron.slice(-5).map(o=>`<span style="color:${o.result==="HIT"?"var(--green)":"var(--red)"}">&#9679;</span>`).join("")||'<span class="muted">—</span>';
+  const barRow=(lab,o)=>{const p2=o.n?Math.round(100*o.h/o.n):0;
+    return `<div class="flex" style="gap:8px;margin-bottom:5px;align-items:center">
+      <span class="small" style="width:82px">${lab}</span>
+      <div style="flex:1;height:9px;background:#0b1119;border-radius:5px;overflow:hidden"><div style="width:${p2}%;height:9px;background:${p2>=55?"var(--green)":"var(--red)"};border-radius:5px"></div></div>
+      <span class="small num" style="width:76px;text-align:right">${p2}% <span class="muted" style="font-size:11px">${o.h}-${o.n-o.h}</span></span></div>`;};
+  const head=`
+  <div class="flex" style="gap:6px;margin-bottom:10px">
+    <button class="btn ghost sm" style="${EPTAB==="now"?"border-color:var(--accent);color:var(--accent)":""}" onclick="EPTAB='now';render()">this matchday</button>
+    <button class="btn ghost sm" style="${EPTAB==="rec"?"border-color:var(--accent);color:var(--accent)":""}" onclick="EPTAB='rec';render()">the record &amp; reports</button>
+    <span class="right small" style="color:#4d5766">every match gets a call · graded automatically · nothing staked</span>
   </div>
-  ${P.length?P.map(p=>{
-    const o=p.outcomes||[];
-    const nH=o.filter(x=>x.result==="HIT").length;
+  <div class="grid" style="grid-template-columns:1.45fr 1fr 1fr;gap:10px;margin-bottom:12px">
+    <div class="panel" style="margin:0;border-left:3px solid var(--green);border-radius:0 10px 10px 0;padding:12px 14px">
+      <div class="flex" style="gap:14px;align-items:center">
+        <div style="text-align:center"><div class="num" style="font-size:34px;font-weight:500;line-height:1;color:${pct==null?"var(--muted)":pct>=55?"var(--green)":"var(--red)"}">${pct==null?"—":pct+"%"}</div>
+          <div class="small" style="color:#5d6879;margin-top:2px">overall · ${hits}-${allO.length-hits}</div></div>
+        <div style="flex:1;min-width:0">${Object.keys(BT).length?["winner","over/under","both score","combos"].filter(k=>BT[k]).map(k=>barRow(k,BT[k])).join(""):'<p class="small muted">First grades land after the next matchday.</p>'}</div>
+      </div></div>
+    <div class="panel" style="margin:0;border-left:3px solid var(--blue);border-radius:0 10px 10px 0;padding:12px 14px">
+      <div style="font-size:11px;letter-spacing:.06em;color:#5d6879">would-be profit</div>
+      <div class="num ${dollars>=0?"pos":"neg"}" style="font-size:24px;font-weight:500">${dollars>=0?"+":"&#8722;"}$${Math.abs(dollars).toFixed(0)}</div>
+      <div class="small" style="color:#5d6879">$10 flat on every pick, at our max prices</div></div>
+    <div class="panel" style="margin:0;border-left:3px solid var(--accent);border-radius:0 10px 10px 0;padding:12px 14px">
+      <div style="font-size:11px;letter-spacing:.06em;color:#5d6879">honesty check</div>
+      <div class="small" style="margin:5px 0 4px;line-height:1.5">${honesty}</div>
+      <div class="small" style="color:#5d6879">last 5: ${dots}</div></div>
+  </div>`;
+  if(EPTAB==="now"){
+    return head+`
+    ${openP.length?openP.slice().sort((a,b)=>String(a.kickoff).localeCompare(String(b.kickoff))).map(p=>`
+    <div class="panel" style="margin-top:10px">
+      <div class="flex"><b style="font-size:15px">${esc(p.match)}</b>
+        <span class="small" style="color:var(--blue)">${p.kickoff?new Date(p.kickoff).toLocaleDateString([],{weekday:"short"})+" "+new Date(p.kickoff).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):""}</span>
+        <span class="tag pend right">OPEN</span></div>
+      ${(p.picks||[]).map(k=>`<div style="border-left:2px solid var(--border);padding:4px 0 4px 10px;margin:6px 0">
+        <span class="small"><b>${esc(k.pick)}</b> — <b class="num">${k.prob}%</b></span>
+        <p class="small muted" style="margin:2px 0 0">${esc(k.why||"")}</p></div>`).join("")}
+    </div>`).join(""):'<div class="panel"><p class="muted small">No open picks — the engine writes them when the board scans the next matchweek.</p></div>'}`;
+  }
+  // record tab
+  const mws=[...new Set(graded.map(p=>fxEv[p.fixture_id]||0))].sort((a,b)=>b-a);
+  const reports=mws.map(mw=>{
+    const G=graded.filter(p=>(fxEv[p.fixture_id]||0)===mw);
+    const O=G.flatMap(p=>p.outcomes||[]);
+    const h2=O.filter(o=>o.result==="HIT").length;
+    const d2=O.reduce((a,o)=>a+wb(o),0);
+    const PS=passes.filter(p=>(fxEv[p.fixture_id]||0)===mw);
+    const psR=PS.filter(p=>String(p.analysis||"").includes("looks right")).length;
+    const bt2={}; for(const o of O){const k=NAMES[o.market]||o.market;(bt2[k]||(bt2[k]={h:0,n:0}));bt2[k].n++;if(o.result==="HIT")bt2[k].h++;}
+    const shaves=G.filter(p=>String(p.analysis||"").includes("Regime shave"));
+    const shaveHits=shaves.flatMap(p=>p.outcomes||[]).filter(o=>o.result==="HIT").length;
+    const shaveTot=shaves.flatMap(p=>p.outcomes||[]).length;
+    const V2=(VERDS||[]).filter(v=>v.mw===mw&&v.correct!=null);
+    const vy=V2.filter(v=>v.verdict==="YES"), vn=V2.filter(v=>v.verdict==="NO");
+    const misses=G.filter(p=>(p.outcomes||[]).some(o=>o.result==="MISS"));
+    const story=[
+      `${h2} of ${O.length} picks landed${O.length?" ("+Math.round(100*h2/O.length)+"%)":""}, worth ${d2>=0?"+":"−"}$${Math.abs(d2).toFixed(0)} at $10 flat.`,
+      Object.entries(bt2).map(([k,v])=>`${k} ${v.h}-${v.n-v.h}`).join(", ")+".",
+      shaveTot?`Regime-shaved matches went ${shaveHits}-${shaveTot-shaveHits} — ${shaveHits/shaveTot>=0.5?"the shaves earned their keep":"the shaves may be miscalibrated; flagged for the discovery loop"}.`:"",
+      V2.length?`My YES calls went ${vy.filter(v=>v.correct).length}-${vy.filter(v=>!v.correct).length}, my NO calls ${vn.filter(v=>v.correct).length}-${vn.filter(v=>!v.correct).length} (a NO is right when the bet would have lost).`:"",
+      PS.length?`Quietly passed ${PS.length} match${PS.length>1?"es":""}; passing looked right in ${psR}.`:"",
+      misses.length?`Lessons: ${misses.map(p=>esc(p.match)+" — "+esc((p.outcomes||[]).filter(o=>o.result==="MISS").map(o=>o.pick).join(", "))).join(" · ")}.`:"Nothing missed — stay suspicious of clean weeks."
+    ].filter(Boolean).join(" ");
+    return `<div class="panel" style="margin-top:10px;border-left:3px solid var(--accent);border-radius:0 10px 10px 0">
+      <div class="flex rowbtn" style="cursor:pointer" onclick="EPREP=(EPREP===${mw}?null:${mw});render()">
+        <b>Matchweek ${mw} report — what I chose and why</b>
+        <span class="small right" style="color:${O.length&&h2/O.length>=0.55?"var(--green)":"var(--red)"}">${h2}/${O.length} hit · ${d2>=0?"+":"−"}$${Math.abs(d2).toFixed(0)}</span></div>
+      ${EPREP===mw?`<p class="small" style="margin:8px 0 0;line-height:1.75">${story}</p>`:""}
+    </div>`;
+  }).join("");
+  const cards=graded.slice().sort((a,b)=>String(b.kickoff).localeCompare(String(a.kickoff))).map(p=>{
+    const o=p.outcomes||[], nH=o.filter(x=>x.result==="HIT").length;
     return `<div class="panel" style="margin-top:10px">
-    <div class="flex"><b style="font-size:15px">${esc(p.match)}${p.settled&&p.score?" — "+esc(p.score):""}</b>
-      <span class="muted small">${p.kickoff?new Date(p.kickoff).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}):""}</span>
-      ${p.settled?(o.length?`<span class="tag ${nH===o.length?"hit":nH?"watch":"miss"}" style="margin-left:auto">${nH} of ${o.length} hit</span>`:`<span class="tag pend" style="margin-left:auto">PASSED</span>`):`<span class="tag pend" style="margin-left:auto">OPEN</span>`}</div>
-    <div style="border-left:2px solid var(--border);padding-left:12px;margin-top:8px">
-      ${(p.picks&&p.picks.length)?p.picks.map((k,i)=>{
-        const res=p.settled&&o[i]?o[i].result:null;
-        return `<p class="small" style="margin:5px 0">${res?`<span class="tag ${res==="HIT"?"hit":"miss"}">${res}</span> `:""}${esc(k.pick)} — <b>${k.prob}%</b> <span class="muted">· ${esc(k.why||"")}</span></p>`;}).join("")
-      :`<p class="small muted" style="margin:5px 0">PASS — ${esc(p.pass_reason||"no edge")}</p>`}
-    </div>
-    ${p.analysis?`<div class="detail" style="margin-top:8px"><p class="small" style="margin:0">🧠 ${esc(p.analysis)}</p></div>`:""}
-    ${p.settled?`<div style="margin-top:8px">
-      ${p.dan_notes?`<div class="detail" style="border-left:3px solid var(--accent);border-radius:0 10px 10px 0"><p class="small" style="margin:0"><b class="muted">YOUR NOTES:</b> ${esc(p.dan_notes)}</p>
-        <button class="btn ghost sm" style="margin-top:4px" onclick="HWEDIT=${p.fixture_id};render()">edit</button></div>`:""}
-      ${(!p.dan_notes||HWEDIT===p.fixture_id)?`<div class="flex" style="gap:8px;margin-top:6px">
-        <input id="hw_${p.fixture_id}" placeholder="your homework: what did YOU see in this result?" style="flex:1" value="${esc(p.dan_notes||"")}">
-        <button class="btn sm" onclick="saveHW(${p.fixture_id})">save notes</button></div>`:""}
-    </div>`:""}
-  </div>`;}).join(""):'<div class="panel"><p class="muted">No picks recorded yet — they generate automatically when the Bet Board scans a matchweek.</p></div>'}
-  ${(()=>{
-    const acts={};
-    for(const p of graded){
-      const par=(p.engine&&p.engine.params)||{};
-      for(const [k,v] of Object.entries(par)){
-        if(k==="script"||v===0||v==null)continue;
-        const a=acts[k]=acts[k]||{n:0,h:0,tot:0};
-        for(const o of (p.outcomes||[])){a.n++;if(o.result==="HIT")a.h++;}
-        a.tot++;
-      }
+    <div class="flex"><b style="font-size:15px">${esc(p.match)} — ${esc(p.score||"")}</b>
+      <span class="small muted">${p.kickoff?new Date(p.kickoff).toLocaleDateString([],{month:"short",day:"numeric"}):""}</span>
+      <span class="tag ${nH===o.length?"hit":nH?"watch":"miss"} right">${nH} of ${o.length} hit</span></div>
+    ${o.map(k=>`<div style="border-left:2px solid ${k.result==="HIT"?"var(--green)":"var(--red)"};padding:3px 0 3px 10px;margin:5px 0">
+      <span class="tag ${k.result==="HIT"?"hit":"miss"}" style="margin-right:6px">${k.result}</span>
+      <span class="small"><b>${esc(k.pick)}</b> — said <b class="num">${k.prob}%</b></span></div>`).join("")}
+    ${p.analysis?`<div class="detail" style="margin-top:8px"><p class="small" style="margin:0">${esc(p.analysis)}</p></div>`:""}
+    ${p.dan_notes?`<div class="detail" style="margin-top:6px;border-left:3px solid var(--accent);border-radius:0 10px 10px 0"><p class="small" style="margin:0"><b class="muted">YOUR NOTES:</b> ${esc(p.dan_notes)}</p>
+      <button class="btn ghost sm" style="margin-top:4px" onclick="HWEDIT=${p.fixture_id};render()">edit</button></div>`:""}
+    ${(!p.dan_notes||HWEDIT===p.fixture_id)?`<div class="flex" style="gap:8px;margin-top:6px">
+      <input id="hw_${p.fixture_id}" placeholder="your homework: what did YOU see in this result?" style="flex:1" value="${esc(p.dan_notes||"")}">
+      <button class="btn sm" onclick="saveHW(${p.fixture_id})">save notes</button></div>`:""}
+  </div>`;}).join("");
+  const acts={};
+  for(const p of graded){
+    const par=(p.engine&&p.engine.params)||{};
+    for(const [k,v] of Object.entries(par)){
+      if(k==="script"||v===0||v==null)continue;
+      const a=acts[k]=acts[k]||{n:0,h:0,tot:0};
+      for(const o of (p.outcomes||[])){a.n++;if(o.result==="HIT")a.h++;}
+      a.tot++;
     }
-    const reg=((DB.settings.engine_params||{}).registry)||[];
-    const rows=Object.entries(acts);
-    return `<div class="panel" style="margin-top:12px"><h2>Parameter attribution — which ingredients earn their weight</h2>
-    <p class="small muted" style="margin-bottom:8px">Every pick records which parameters pushed it. As results accumulate, each parameter's real-world record appears here. Verdicts unlock at 30 activations (whisper) and 100 (confident) — before that, everything is 'collecting'. Changes are proposed to you, never auto-applied.</p>
+  }
+  const reg=((DB.settings.engine_params||{}).registry)||[];
+  const attr=`<div class="panel" style="margin-top:12px"><h2>Parameter attribution — which ingredients earn their weight</h2>
+    <p class="small muted" style="margin-bottom:8px">Every pick records which parameters pushed it. Verdicts unlock at 30 activations (whisper) and 100 (confident). Changes are proposed to you, never auto-applied.</p>
     <table><tr><th>Parameter</th><th>Fired in</th><th>Picks graded</th><th>Hit when active</th><th>Status</th></tr>
     ${reg.map(r=>{const a=acts[r.id];return `<tr><td><b class="small">${esc(r.name)}</b><br><span class="muted small">${esc(r.weight)}</span></td>
       <td class="num">${a?a.tot+" matches":"—"}</td><td class="num">${a?a.n:"0"}</td>
       <td class="num">${a&&a.n?Math.round(100*a.h/a.n)+"%":"—"}</td>
       <td class="small ${a&&a.n>=30?"":"muted"}">${a&&a.n>=100?"CONFIDENT":a&&a.n>=30?"whisper":"collecting ("+(a?a.n:0)+"/30)"}</td></tr>`;}).join("")}
-    </table></div>`;})()}
-  <p class="small muted" style="margin-top:10px">Grading and one-line analysis are automatic (hourly). Deeper per-match reviews and any engine tweaks happen in our sessions — proposals only, you approve.</p>`;
+    </table></div>`;
+  return head+reports+cards+attr;
 }
 /* ---------- BET LEDGER ---------- */
 let LOGFORM=null;
