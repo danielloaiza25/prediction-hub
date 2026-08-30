@@ -1081,7 +1081,8 @@ async function renderEngine(){
   try{ PAPERS=await api("paper_picks?select=*&order=kickoff.desc&limit=120"); }catch(e){ m.innerHTML='<p class="neg">'+esc(e.message)+'</p>'; return; }
   m.innerHTML=vEngine(); window.scrollTo(0,0);
 }
-let EPTAB="now", EPREP=null;
+let EPTAB="now", EPREP=null, EPLOG=null;
+function setEPLog(k){ EPLOG=(EPLOG===k?null:k); render(); }
 function vEngine(){
   const P=PAPERS||[];
   if(VERDS===null){VERDS=[];api("verdicts?select=*&order=locked_at.desc&limit=300").then(r=>{VERDS=r;if(TAB==="engine")render();}).catch(()=>{});}
@@ -1089,7 +1090,7 @@ function vEngine(){
   const graded=P.filter(p=>p.settled&&(p.outcomes||[]).length);
   const passes=P.filter(p=>p.settled&&!(p.outcomes||[]).length);
   const openP=P.filter(p=>!p.settled&&(p.picks||[]).length);
-  const allO=graded.flatMap(p=>(p.outcomes||[]).map(o=>({...o,_k:p.kickoff,_mw:fxEv[p.fixture_id]||0})));
+  const allO=graded.flatMap(p=>(p.outcomes||[]).map(o=>({...o,_k:p.kickoff,_m:p.match,_s:p.score,_mw:fxEv[p.fixture_id]||0})));
   const hits=allO.filter(o=>o.result==="HIT").length;
   const pct=allO.length?Math.round(100*hits/allO.length):null;
   const NAMES={over:"over/under",under:"over/under",winner:"winner",no:"winner",btts:"both score",combo:"combos"};
@@ -1105,7 +1106,7 @@ function vEngine(){
   const chron=allO.slice().sort((a,b)=>String(a._k).localeCompare(String(b._k)));
   const dots=chron.slice(-5).map(o=>`<span style="color:${o.result==="HIT"?"var(--green)":"var(--red)"}">&#9679;</span>`).join("")||'<span class="muted">—</span>';
   const barRow=(lab,o)=>{const p2=o.n?Math.round(100*o.h/o.n):0;
-    return `<div class="flex" style="gap:8px;margin-bottom:5px;align-items:center">
+    return `<div class="flex rowbtn" style="gap:8px;margin-bottom:5px;align-items:center;cursor:pointer" onclick="event.stopPropagation();setEPLog('${lab}')">
       <span class="small" style="width:82px">${lab}</span>
       <div style="flex:1;height:9px;background:#0b1119;border-radius:5px;overflow:hidden"><div style="width:${p2}%;height:9px;background:${p2>=55?"var(--green)":"var(--red)"};border-radius:5px"></div></div>
       <span class="small num" style="width:76px;text-align:right">${p2}% <span class="muted" style="font-size:11px">${o.h}-${o.n-o.h}</span></span></div>`;};
@@ -1116,7 +1117,7 @@ function vEngine(){
     <span class="right small" style="color:#4d5766">every match gets a call · graded automatically · nothing staked</span>
   </div>
   <div class="grid" style="grid-template-columns:1.45fr 1fr 1fr;gap:10px;margin-bottom:12px">
-    <div class="panel" style="margin:0;border-left:3px solid var(--green);border-radius:0 10px 10px 0;padding:12px 14px">
+    <div class="panel rowbtn" style="margin:0;border-left:3px solid var(--green);border-radius:0 10px 10px 0;padding:12px 14px;cursor:pointer" onclick="setEPLog('all')">
       <div class="flex" style="gap:14px;align-items:center">
         <div style="text-align:center"><div class="num" style="font-size:34px;font-weight:500;line-height:1;color:${pct==null?"var(--muted)":pct>=55?"var(--green)":"var(--red)"}">${pct==null?"—":pct+"%"}</div>
           <div class="small" style="color:#5d6879;margin-top:2px">overall · ${hits}-${allO.length-hits}</div></div>
@@ -1130,7 +1131,25 @@ function vEngine(){
       <div style="font-size:11px;letter-spacing:.06em;color:#5d6879">honesty check</div>
       <div class="small" style="margin:5px 0 4px;line-height:1.5">${honesty}</div>
       <div class="small" style="color:#5d6879">last 5: ${dots}</div></div>
-  </div>`;
+  </div>
+  ${EPLOG?(()=>{
+    const rows=allO.filter(o=>EPLOG==="all"||(NAMES[o.market]||o.market)===EPLOG)
+      .sort((a,b)=>String(b._k).localeCompare(String(a._k)));
+    return `<div class="panel" style="margin:0 0 12px;padding:0;overflow:hidden">
+      <div class="flex" style="padding:11px 16px 7px"><h2 style="margin:0;font-size:15px">Decision log${EPLOG==="all"?"":" — "+esc(EPLOG)}</h2>
+        <span class="small muted">${rows.length} graded pick${rows.length===1?"":"s"}</span>
+        <button class="btn ghost sm right" onclick="setEPLog(null)">close</button></div>
+      <div class="flex small" style="padding:3px 16px;border-bottom:1px solid var(--border);color:#5d6879;gap:6px">
+        <span style="width:52px">date</span><span style="flex:1">match &amp; pick</span>
+        <span style="width:46px;text-align:right">said</span><span style="width:44px;text-align:right">score</span><span style="width:52px;text-align:right">result</span></div>
+      ${rows.length?rows.map(o=>`<div class="flex small" style="padding:6px 16px;border-bottom:1px solid #141b26;gap:6px;align-items:center">
+        <span style="width:52px;color:#4d5766">${o._k?new Date(o._k).toLocaleDateString([],{month:"short",day:"numeric"}):""}</span>
+        <span style="flex:1;min-width:0"><b>${esc(o.pick)}</b> <span class="muted">${esc(o._m||"")}</span></span>
+        <b class="num" style="width:46px;text-align:right">${o.prob}%</b>
+        <span class="num" style="width:44px;text-align:right;color:#8b97ab">${esc(o._s||"")}</span>
+        <span style="width:52px;text-align:right"><span class="tag ${o.result==="HIT"?"hit":"miss"}">${o.result}</span></span>
+      </div>`).join(""):'<p class="muted small" style="padding:12px 16px">Nothing graded in this market yet.</p>'}
+    </div>`;})():""}`;
   if(EPTAB==="now"){
     return head+`
     ${openP.length?openP.slice().sort((a,b)=>String(a.kickoff).localeCompare(String(b.kickoff))).map(p=>`
