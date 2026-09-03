@@ -170,9 +170,11 @@ function goGroup(id){
   const g=GROUPS.find(x=>x.id===id);
   go(LASTTAB[id]||g.tabs[0][0]);
 }
-function go(t){TAB=t;LASTTAB[groupOf(t).id]=t;location.hash=t;render();}
+let SCROLLTOP=false;
+function go(t){TAB=t;LASTTAB[groupOf(t).id]=t;location.hash=t;SCROLLTOP=true;render();}
 
 function render(){
+  var _ry=window.scrollY||0;
   renderNav();
   const ec=document.getElementById("expertchk"); if(ec)ec.checked=EXPERT;
   const m=document.getElementById("main");
@@ -194,7 +196,7 @@ function render(){
   else if(TAB==="venues") m.innerHTML=vVenues();
   else if(TAB==="calculator") m.innerHTML=vCalc();
   else if(TAB==="data") m.innerHTML=vData();
-  window.scrollTo(0,0);
+  if(SCROLLTOP){ window.scrollTo(0,0); SCROLLTOP=false; } else { window.scrollTo(0,_ry); }
 }
 
 /* ---------- PL HELPERS ---------- */
@@ -2446,43 +2448,78 @@ function mrPitchPhase(f, hL, aL){
   const atkTeam=atkSide==="h"?f.team_h_name:f.team_a_name;
   const defTeam=defSide==="h"?f.team_h_name:f.team_a_name;
   const atkL=atkSide==="h"?hL:aL, defL=defSide==="h"?hL:aL;
-  const W=560,H=200;
-  const defGoalX= defSide==="h" ? 0 : 560;
-  const dir= defSide==="h" ? 1 : -1;
-  const [offSh,offNote]=OFFSHAPE[defTeam]||["4-4-2",""];
+  if(!atkL||!defL) return `<div class="detail"><p class="small" style="color:var(--red);margin:0">Phase view needs verified lineups for both sides.</p></div>`;
   const atkCol=TEAMCOL[atkTeam]||"#ef4444";
-  let out="";
-  if(defL){
-    const slots=lineupSlots(defL);
-    out+=slots.map((s,i)=>{
-      const depth=(s.x-38)/(470-38);
-      const x= defGoalX + dir*(18 + depth*150);
-      const y= s.y*(H-24)/220+12;
-      const pts=`${x},${y-8} ${x-7},${y+6} ${x+7},${y+6}`;
-      return `<g style="cursor:pointer" onclick="MRSEL='${defSide}|${i}';render()"><polygon points="${pts}" fill="#8b97ab" ${MRSEL===defSide+"|"+i?'stroke="var(--blue)" stroke-width="2"':'stroke="#0b0f16" stroke-width="0.5"'}/></g>`;
-    }).join("");
-  }
-  if(atkL){
-    const slots=lineupSlots(atkL);
-    out+=slots.map((s,i)=>{
-      const depth=(s.x-38)/(470-38);
-      let x,y=s.y*(H-24)/220+12;
-      if(depth<0.12){ x= defGoalX + dir*440; }
-      else if(depth<0.42){ x= defGoalX + dir*(330 - (depth-0.12)*260); y=(y-H/2)*0.85+H/2; }
-      else { x= defGoalX + dir*(215 - (depth-0.42)*230); }
-      const ghost=depth<0.42;
-      return `<g style="cursor:pointer" onclick="MRSEL='${atkSide}|${i}';render()"><circle cx="${x.toFixed(0)}" cy="${y.toFixed(0)}" r="7" fill="${atkCol}" opacity="${ghost?0.35:1}" ${MRSEL===atkSide+"|"+i?'stroke="var(--blue)" stroke-width="2"':'stroke="#0b0f16" stroke-width="0.5"'}/></g>`;
-    }).join("");
-  }
-  const noteX = defSide==="h" ? 400 : 160;
-  return `<svg viewBox="0 0 560 ${H}" style="width:100%;background:#12324a;border-radius:0 0 10px 10px">
-    <rect x="4" y="4" width="552" height="${H-8}" fill="none" stroke="#2a5b7a" stroke-width="1.5"/>
-    <line x1="280" y1="4" x2="280" y2="${H-4}" stroke="#2a5b7a"/>
-    <rect x="${defSide==="h"?5:335}" y="5" width="220" height="${H-10}" fill="#e74c5b" opacity="0.05" style="cursor:pointer" onclick="MRPHASE=null;MRSEL=null;render()"/>
-    <text x="${noteX}" y="${H-12}" font-size="8.5" fill="#3f6a8a" text-anchor="middle">ghosted = ${esc(atkTeam)} rest-defense · click open pitch = back to neutral</text>
-    ${out}
+  const [offSh,offNote]=OFFSHAPE[defTeam]||["4-4-2",""];
+  const W=380,H=330;
+  // ----- defender: banks in front of goal (goal at top) -----
+  const dLines={D:[],DM:[],M:[],AM:[],F:[]}; let dGK=null;
+  defL.players.forEach((p,i)=>{ const l=posLine(p.pos); if(l==="G")dGK={p,i}; else dLines[l].push({p,i}); });
+  const banks=[];
+  if(dLines.D.length)banks.push({y:78,arr:dLines.D});
+  if(dLines.DM.length&&dLines.M.length){banks.push({y:122,arr:dLines.DM});banks.push({y:158,arr:dLines.M});}
+  else if(dLines.DM.length)banks.push({y:126,arr:dLines.DM});
+  else if(dLines.M.length)banks.push({y:126,arr:dLines.M});
+  if(dLines.AM.length)banks.push({y:banks.length>2?192:168,arr:dLines.AM});
+  if(dLines.F.length)banks.push({y:210,arr:dLines.F});
+  const sideSort=(arr,side)=>arr.slice().sort((x,y)=>{const a=sideRank(x.p.pos),b=sideRank(y.p.pos);return (side==="a"?(b-a):(a-b))||x.p.order-y.p.order;});
+  let defDots="";
+  const spreadX=(n,pad)=>{const out=[];for(let i2=0;i2<n;i2++)out.push(n===1?W/2:pad+i2*(W-2*pad)/(n-1));return out;};
+  banks.forEach(b=>{
+    const arr=sideSort(b.arr,defSide);
+    const xs=spreadX(arr.length, 70);
+    arr.forEach((o,j)=>{
+      const x=xs[j], y=b.y;
+      defDots+=`<g style="cursor:pointer" onclick="MRSEL='${defSide}|${o.i}';render()"><polygon points="${x},${y-9} ${x-8},${y+6} ${x+8},${y+6}" fill="#9aa5b4" ${MRSEL===defSide+"|"+o.i?'stroke="var(--blue)" stroke-width="2.5"':'stroke="#0b0f16" stroke-width="0.7"'}/></g>`;
+    });
+  });
+  if(dGK) defDots+=`<g style="cursor:pointer" onclick="MRSEL='${defSide}|${dGK.i}';render()"><polygon points="${W/2},${34} ${W/2-8},${49} ${W/2+8},${49}" fill="#f5e642" ${MRSEL===defSide+"|"+dGK.i?'stroke="var(--blue)" stroke-width="2.5"':'stroke="#0b0f16" stroke-width="0.7"'}/></g>`;
+  // ----- attacker: structured around the block -----
+  const aL2={D:[],DM:[],M:[],AM:[],F:[]}; let aGK=null;
+  atkL.players.forEach((p,i)=>{ const l=posLine(p.pos); if(l==="G")aGK={p,i}; else aL2[l].push({p,i}); });
+  const lastBankY=banks.length?banks[banks.length-1].y:170;
+  let atkDots="";
+  const put=(o,x,y)=>{ atkDots+=`<g style="cursor:pointer" onclick="MRSEL='${atkSide}|${o.i}';render()"><circle cx="${x.toFixed(0)}" cy="${y.toFixed(0)}" r="8" fill="${atkCol}" ${MRSEL===atkSide+"|"+o.i?'stroke="var(--blue)" stroke-width="2.5"':'stroke="#0b0f16" stroke-width="0.8"'}/></g>`; };
+  const aF=sideSort(aL2.F,atkSide), aAM=sideSort(aL2.AM,atkSide), aM=sideSort(aL2.M,atkSide), aDM=sideSort(aL2.DM,atkSide), aD=sideSort(aL2.D,atkSide);
+  // strikers between back line and second bank
+  spreadX(aF.length,140).forEach((x,j)=>put(aF[j],x,100));
+  // AMs: wide ones hug touchline at bank height, central in the pocket
+  aAM.forEach((o)=>{const sr=sideRank(o.p.pos);
+    if(sr<=1) put(o, atkSide==="h"?40:W-40, 118);
+    else if(sr>=3) put(o, atkSide==="h"?W-40:40, 118);
+    else put(o, W/2, 138);});
+  // Ms split wide-ish pockets
+  spreadX(Math.max(aM.length,1),120).forEach((x,j)=>{ if(aM[j])put(aM[j],x,176); });
+  // pivots at the edge of the final third
+  spreadX(Math.max(aDM.length,1),140).forEach((x,j)=>{ if(aDM[j])put(aDM[j],x,212); });
+  // fullbacks push HIGH and WIDE (outside everything); CBs stay deep at bottom
+  const aCB=aD.filter(o=>sideRank(o.p.pos)===2);
+  aD.forEach((o)=>{const sr=sideRank(o.p.pos);
+    if(sr<=1) put(o, 24, 150);
+    else if(sr>=3) put(o, W-24, 150);});
+  spreadX(Math.max(aCB.length,1),150).forEach((x,j)=>{ if(aCB[j])put(aCB[j],x,266); });
+  // arrows: two wide overlaps + central run
+  const arrows=`
+    <path d="M 30 200 C 26 160, 30 130, 44 96" fill="none" stroke="${atkCol}" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arr)"/>
+    <path d="M ${W-30} 200 C ${W-26} 160, ${W-30} 130, ${W-44} 96" fill="none" stroke="${atkCol}" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arr)"/>
+    <path d="M ${W/2} 132 C ${W/2+8} 112, ${W/2+4} 92, ${W/2} 72" fill="none" stroke="${atkCol}" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arr)" opacity="0.9"/>`;
+  const restN=aD.filter(o=>sideRank(o.p.pos)===2).length + (aDM.length?1:0);
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:430px;display:block;margin:0 auto;background:#12324a;border-radius:0 0 10px 10px">
+    <defs><marker id="arr" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="${atkCol}"/></marker></defs>
+    <rect x="4" y="4" width="${W-8}" height="${H-8}" fill="none" stroke="#2a5b7a" stroke-width="1.5"/>
+    <rect x="${W/2-60}" y="4" width="120" height="42" fill="none" stroke="#2a5b7a" stroke-width="1.2"/>
+    <rect x="${W/2-26}" y="4" width="52" height="16" fill="none" stroke="#2a5b7a"/>
+    <rect x="${W/2-34}" y="0" width="68" height="5" fill="#e6ebf2" opacity="0.85"/>
+    <circle cx="${W/2}" cy="${H-4}" r="52" fill="none" stroke="#2a5b7a" stroke-dasharray="3 4"/>
+    <text x="${W/2}" y="60" font-size="9" fill="#5d84a3" text-anchor="middle">${esc(defTeam)} defend their goal in a ${esc(offSh)}</text>
+    ${arrows}${defDots}${atkDots}
+    <text x="${W/2}" y="${H-14}" font-size="9" fill="#5d84a3" text-anchor="middle">${esc(atkTeam)} build from here — ${restN} stay behind the ball (rest-defense)</text>
   </svg>
-  <p class="small" style="margin:5px 0 0;color:#5d6879">● ${esc(atkTeam)} attacking (${esc(LINEUP[atkTeam]?fmtLabel(LINEUP[atkTeam]):"")} on-ball) · ▲ ${esc(defTeam)} defending (${esc(offSh)} — ${esc(offNote)}) · phase shapes = curated match-study reads · tap any marker for the name</p>`;
+  <div class="flex small" style="gap:12px;margin-top:6px;justify-content:center;flex-wrap:wrap;color:#8b97ab">
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${atkCol};vertical-align:-1px"></span> ${esc(atkTeam)} attacking (${esc(fmtLabel(atkL))} on-ball)</span>
+    <span>▲ ${esc(defTeam)} block (${esc(offSh)} · ${esc(offNote)})</span>
+    <span style="color:#4d5766">tap any marker for the name & duel · click the team name again for neutral</span>
+  </div>`;
 }
 function mrStakes(f){
   const bits=[];
@@ -2533,7 +2570,7 @@ function vMatch(){
   const teamBtn=(side)=>{
     const t=side==="h"?f.team_h_name:f.team_a_name;
     const on=MRPHASE===side;
-    return `<button class="btn ghost sm" style="border-radius:7px 7px 0 0;border-bottom:none;${on?"border-color:var(--accent);color:var(--accent);background:#2a2313":""}" onclick="MRPHASE=MRPHASE==='${side}'?null:'${side}';MRSEL=null;MRZONE=null;render()">${on?"▶ ":""}${esc(t)} <span style="font-size:9px;color:#5d6879">(${side==="h"?"H":"A"})${on?" — attacking":""}</span></button>`;
+    return `<button style="flex:1;padding:10px 8px;font-size:16px;font-weight:700;letter-spacing:.3px;cursor:pointer;border:1px solid ${on?"var(--accent)":"var(--line)"};border-bottom:none;border-radius:10px 10px 0 0;background:${on?"#2a2313":"var(--panel)"};color:${on?"var(--accent)":"var(--text)"}" onclick="MRPHASE=MRPHASE==='${side}'?null:'${side}';MRSEL=null;MRZONE=null;render()">${on?"▶ ":""}${esc(t)}<span style="font-size:10px;color:#5d6879;font-weight:400"> (${side==="h"?"HOME":"AWAY"})${on?" — ATTACKING":""}</span></button>`;
   };
   const filterTeam = MRPHASE ? (MRPHASE==="h"?f.team_h_name:f.team_a_name) : null;
   let tabBody="";
@@ -2593,7 +2630,8 @@ function vMatch(){
     <div class="small" style="margin-top:6px;color:var(--muted)"><b style="color:var(--text)">THE STAKES:</b> ${mrStakes(f)||"loading…"}</div>
   </div>
   <div style="margin-top:10px">
-    <div class="flex" style="justify-content:space-between">${teamBtn("h")}<span class="small" style="align-self:center;color:#4d5766">${MRPHASE?"phase view":"click a lane · a player · or a team name"}</span>${teamBtn("a")}</div>
+    <div style="display:flex;gap:6px">${teamBtn("h")}${teamBtn("a")}</div>
+    <p class="small" style="margin:2px 0 4px;color:#4d5766;text-align:center">${MRPHASE?"phase view — how the attack meets the block":"click a lane · a player · or a TEAM NAME to stage attack vs defense"}</p>
     ${MRPHASE?mrPitchPhase(f,hL,aL):mrPitchNeutral(f,hL,aL)}
     ${(!hL||!aL)?`<p class="small" style="color:var(--red);margin:5px 0 0">⚠ ${!hL?esc(f.team_h_name):esc(f.team_a_name)} has no verified lineup stored — panels for that side limited (flagged).</p>`:""}
     ${mrSelPanel(f,hL,aL)}
