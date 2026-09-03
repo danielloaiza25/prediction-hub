@@ -156,7 +156,7 @@ const GROUPS = [
   {id:"news",      label:"News",      tabs:[["news","Live feed & notes"]]},
   {id:"preds",     label:"Predictions", tabs:[["engine","Engine Picks"],["bankroll","Bankroll"],["predictions","Archive (manual log)"],["ledger","Bet Ledger"],["autopsies","Autopsies"]]},
   {id:"league",    label:"League",    tabs:[["pltable","Table & Team Profiles"],["fixtures","Matchweek detail"],["inplay","In-Play Card"],["venues","Venues (AIS)"]]},
-  {id:"squads",    label:"Scouting Report", tabs:[["scout","Clubs"],["players","Players (PRS)"],["coaches","Coaches (TMS)"]]},
+  {id:"squads",    label:"Scouting Report", tabs:[["scout","Pitch view"],["scouttext","Club notes"],["players","Players (PRS)"],["coaches","Coaches (TMS)"]]},
   {id:"tools",     label:"Tools",     tabs:[["calculator","Calculator"],["data","Import / Export"]]},
 ];
 const LASTTAB={};
@@ -186,7 +186,8 @@ function render(){
   else if(TAB==="ledger") m.innerHTML=vLedger();
   else if(TAB==="engine"){ if(PAPERS&&PAPERS.length){document.getElementById("main").innerHTML=vEngine();} else renderEngine(); return;}
   else if(TAB==="inplay"){renderInplay();return;}
-  else if(TAB==="scout") m.innerHTML=vScout();
+  else if(TAB==="scout") m.innerHTML=vPitch();
+  else if(TAB==="scouttext") m.innerHTML=vScout();
   else if(TAB==="players") m.innerHTML=vPlayers();
   else if(TAB==="coaches") m.innerHTML=vCoaches();
   else if(TAB==="venues") m.innerHTML=vVenues();
@@ -2252,6 +2253,233 @@ function vProfile(){
 
 /* ---------- SCOUTING REPORT ---------- */
 let scoutTeam=null;
+/* ---------- PITCH VIEW (scouting) ---------- */
+let SCTEAM=null, SCPHASE="on", SCSEL=null, SCTAB="profile", SCSWAP={}, SCDRAWER=null, PPROF={}, TPST={};
+const SCTEAMS=["Arsenal","Aston Villa","Bournemouth","Brentford","Brighton","Chelsea","Coventry City","Crystal Palace","Everton","Fulham","Hull City","Ipswich Town","Leeds","Liverpool","Man City","Man Utd","Newcastle","Nott'm Forest","Spurs","Sunderland"];
+const ONSHAPE={"Arsenal":"4-2-3-1","Man City":"4-2-3-1","Liverpool":"4-2-3-1","Chelsea":"3-4-2-1","Newcastle":"4-2-3-1","Spurs":"4-2-3-1","Brighton":"4-2-3-1","Aston Villa":"4-2-3-1","Nott'm Forest":"3-4-2-1","Crystal Palace":"3-4-2-1","Man Utd":"4-2-3-1","Everton":"4-2-3-1","Brentford":"4-2-3-1","Leeds":"3-4-2-1","Fulham":"4-2-3-1","Bournemouth":"4-2-3-1","Sunderland":"4-2-3-1","Ipswich Town":"4-2-3-1","Coventry City":"4-2-3-1","Hull City":"5-4-1"};
+const OFFSHAPE={"Arsenal":["4-4-2","front two screen, block mid"],"Man City":["4-4-2","Ndiaye tucks; rest-defense the watch"],"Liverpool":["4-2-4","man-jump press: wingers join Isak"],"Chelsea":["5-2-2-1","wing-backs drop; the two 10s trigger"],"Newcastle":["4-4-2","vertical press waves"],"Spurs":["4-4-2","first-pass press"],"Brighton":["4-4-2","feral coordinated jumps"],"Aston Villa":["4-4-2","mid-block, Emery traps"],"Nott'm Forest":["5-2-2-1","ambush block, springs long"],"Crystal Palace":["5-4-1","low block, Nketiah stays"],"Man Utd":["4-4-2","identity forming"],"Everton":["4-4-1-1","the chosen deep block"],"Brentford":["4-4-2","squeeze then drop"],"Leeds":["5-2-2-1","wing-backs drop, tens second wave — NOT the 5-4-1 disaster if it springs"],"Fulham":["4-4-2","new press, net pending"],"Bournemouth":["4-4-2","Rose waves installing"],"Sunderland":["4-4-2","over-station press"],"Ipswich Town":["4-5-1","organized mid-block"],"Coventry City":["4-5-1","survival block"],"Hull City":["5-4-1","the committed block"]};
+function shapeCols(sh){ return String(sh).split("-").map(n=>+n).filter(n=>n>0); }
+function spreadY(n){ const m={1:[110],2:[72,148],3:[45,110,175],4:[35,88,132,185],5:[28,69,110,151,192]}; return m[n]||[110]; }
+function pitchSlots(sh){
+  const cols=shapeCols(sh), slots=[{x:38,y:110,band:"GK"}];
+  const x0=115, x1=480, bx=cols.length>1?(x1-x0)/(cols.length-1):0;
+  cols.forEach((c,i)=>{ const ys=spreadY(c), band=i===0?"DEF":(i===cols.length-1?"FWD":"MID"+i);
+    ys.forEach(y=>slots.push({x:Math.round(x0+bx*i),y,band})); });
+  return slots;
+}
+function atkScore(r){ const a=(r.stats||{}).season_25_26||{}; return (a.xA90||0)*3+(a.shots90||0)+(a.xG90||0)*2; }
+function pMins(r){ const a=(r.stats||{}).season_25_26||{}, b=(r.stats||{}).season_26_27||{}; return (a.mins||0)+3*(b.mins||0); }
+function buildXI(team, sh){
+  const ps=(PPROF[team]||[]).slice();
+  const gk=ps.filter(p=>p.position==="GK").sort((a,b)=>pMins(b)-pMins(a));
+  const df=ps.filter(p=>p.position==="DEF").sort((a,b)=>pMins(b)-pMins(a));
+  const md=ps.filter(p=>p.position==="MID").sort((a,b)=>pMins(b)-pMins(a));
+  const fw=ps.filter(p=>p.position==="FWD").sort((a,b)=>pMins(b)-pMins(a));
+  const cols=shapeCols(sh); const slots=pitchSlots(sh); const xi=[]; const used=new Set();
+  const take=(pool,n)=>{const out=[];for(const p of pool){if(out.length>=n)break;if(!used.has(p.player)){out.push(p);used.add(p.player);}}return out;};
+  xi.push(take(gk,1)[0]||take(md,1)[0]);
+  const needD=cols[0]; let defs=take(df,needD);
+  while(defs.length<needD){const extra=take(md.sort((a,b)=>atkScore(a)-atkScore(b)),1)[0];if(!extra)break;defs.push(extra);}
+  xi.push(...defs);
+  const midBands=cols.slice(1,-1);
+  const mpool=md.filter(p=>!used.has(p.player)).sort((a,b)=>atkScore(a)-atkScore(b));
+  for(let bi=0;bi<midBands.length;bi++){
+    const n=midBands[bi];
+    const pool=bi<midBands.length-1?mpool:mpool.slice().sort((a,b)=>atkScore(b)-atkScore(a));
+    xi.push(...take(pool,n));
+  }
+  const needF=cols[cols.length-1];
+  let fws=take(fw,needF);
+  while(fws.length<needF){const extra=take(md.filter(p=>!used.has(p.player)).sort((a,b)=>atkScore(b)-atkScore(a)),1)[0];if(!extra)break;fws.push(extra);}
+  xi.push(...fws);
+  // apply swaps
+  const bench=ps.filter(p=>!used.has(p.player));
+  for(const [i,name] of Object.entries(SCSWAP)){
+    const sub=ps.find(p=>p.player===name); if(!sub) continue;
+    const idx=+i; if(xi[idx]){ bench.push(xi[idx]); xi[idx]=sub; const bi2=bench.indexOf(sub); if(bi2>=0)bench.splice(bi2,1); }
+  }
+  return {xi:xi.filter(Boolean), bench, slots};
+}
+function meters(r, team){
+  const a=(r.stats||{}).season_25_26||{};
+  const teamPP={"Brighton":3.7,"Liverpool":5.7,"Leeds":6.3,"Sunderland":6.7,"Fulham":8.1,"Brentford":8.2,"Spurs":8.8,"Man Utd":10.4,"Man City":10.7,"Aston Villa":12,"Newcastle":10,"Arsenal":9.6,"Chelsea":9.9,"Bournemouth":9.7,"Nott'm Forest":14.7,"Crystal Palace":13.7,"Everton":15,"Ipswich Town":12.5,"Coventry City":14,"Hull City":15}[team]||11;
+  let press=Math.round(Math.max(8,Math.min(95, (16-teamPP)*7 + (r.position==="FWD"?15:r.position==="MID"?8:r.position==="DEF"?-5:-30))));
+  const wtxt=(r.weaknesses||[]).join(" ").toLowerCase()+" "+String(r.how_he_plays||"").toLowerCase();
+  if(wtxt.includes("press workload")||wtxt.includes("pressing legs")===false&&wtxt.includes("dead-ball creator"))press=Math.min(press,38);
+  if(wtxt.includes("press leader")||wtxt.includes("pressing")&&wtxt.includes("elite"))press=Math.max(press,80);
+  const creation=Math.round(Math.max(5,Math.min(95, ((a.xA90||0)*220)+((a.kp90||0)*18) )));
+  const duels=Math.round(Math.max(10,Math.min(90, (r.position==="DEF"?62:r.position==="MID"?52:38) + ((a.mins||0)>2500?8:0) )));
+  return {press,creation,duels};
+}
+function ptype(r){
+  const a=(r.stats||{}).season_25_26||{}; const m=meters(r,SCTEAM);
+  if(r.position==="GK")return "goalkeeper";
+  if(r.position==="DEF")return (a.xG90||0)>0.08?"ball-playing defender · set-piece threat":"defender";
+  if(m.creation>=65&&(a.shots90||0)>=2)return "creator-shooter hybrid";
+  if(m.creation>=65)return "creator";
+  if((a.shots90||0)>=2.4)return "shot-volume attacker";
+  if(r.position==="FWD")return (a.xG90||0)>=0.45?"penalty-box striker":"pressing forward";
+  return m.press>=60?"engine midfielder":"connector";
+}
+function simTag(cur,cand){
+  const a=meters(cur,SCTEAM),b=meters(cand,SCTEAM);
+  const d=Math.abs(a.creation-b.creation)+Math.abs(a.press-b.press);
+  return d<=45?["SIMILAR","var(--green)","rgba(46,204,113,.16)"]:["DIFFERENT","var(--blue)","rgba(74,163,255,.16)"];
+}
+function swapDelta(cur,cand){
+  const a=meters(cur,SCTEAM),b=meters(cand,SCTEAM); const out=[];
+  if(b.press-a.press>=15)out.push("+ pressing legs"); if(a.press-b.press>=15)out.push("− pressing drops");
+  if(b.creation-a.creation>=15)out.push("+ creation"); if(a.creation-b.creation>=15)out.push("− creation for others drops");
+  if(b.duels-a.duels>=12)out.push("+ physicality");
+  return out.length?out.join(" · "):"near like-for-like swap";
+}
+function formCol(r){
+  const f=+(((r.stats||{}).fpl||{}).form||0);
+  return f>=5?"var(--green)":f>0&&f<2.5?"var(--red)":"#8b97ab";
+}
+function gateRing(r){
+  const sh=((r.stats||{}).fpl||{}).xgi_share||0;
+  return sh>=0.28||((r.stats||{}).fpl||{}).news;
+}
+async function loadScout(team){
+  SCTEAM=team; SCSEL=null; SCSWAP={}; SCDRAWER=null; SCPHASE="on"; render();
+  if(!PPROF[team]){ PPROF[team]=await api("player_profiles?team=eq."+encodeURIComponent(team)+"&select=*"); }
+  if(!TPST[team]){ try{ const r=await api("team_profiles?season=eq.2026-27&select=team,stats"); for(const t of r)TPST[t.team]=t.stats||{}; }catch(e){} }
+  render();
+}
+function nextFx(team){
+  return (DB.plf||[]).filter(f=>!fxDone(f)&&(f.team_h_name===team||f.team_a_name===team)).sort((a,b)=>new Date(a.kickoff)-new Date(b.kickoff))[0];
+}
+function collision(team,opp){
+  const p1=(TPST[team]||{})._ppda, p2=(TPST[opp]||{})._ppda;
+  if(!p1||!p2)return "";
+  const t=x=>x<=9?"press":(x>=13?"block":"mid");
+  const a=t(p1),b=t(p2);
+  let v= a==="press"&&b==="block"?"press should pin the block": b==="press"&&a==="block"?"their press vs our block — first goal decides": a==="press"&&b==="press"?"mirror-press chaos":"even styles";
+  return `<b>${p1}</b> vs <b>${p2}</b> — R3: ${v}`;
+}
+function vPitch(){
+  if(!SCTEAM){
+    return `<div class="panel"><h2>Scouting — pick a club</h2>
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:8px">
+    ${SCTEAMS.map(t=>`<button class="btn ghost" style="padding:10px" onclick="loadScout('${t.replace(/'/g,"\\'")}')">${esc(t)}</button>`).join("")}
+    </div><p class="small muted" style="margin-top:10px">Pitch view: real XI in their real shape, every player profiled. Numbers refresh automatically; written scouting refreshes on the matchday cycle.</p></div>`;
+  }
+  const ps=PPROF[SCTEAM];
+  if(!ps) return `<div class="panel"><p class="muted">Loading ${esc(SCTEAM)} squad…</p></div>`;
+  const onSh=ONSHAPE[SCTEAM]||"4-2-3-1";
+  const [offSh,offNote]=OFFSHAPE[SCTEAM]||["4-4-2",""];
+  const sh=SCPHASE==="on"?onSh:offSh;
+  const {xi,bench,slots}=buildXI(SCTEAM, sh);
+  const fx=nextFx(SCTEAM);
+  const opp=fx?(fx.team_h_name===SCTEAM?fx.team_a_name:fx.team_h_name):null;
+  const shares=ps.map(r=>[(((r.stats||{}).fpl||{}).xgi_share)||0,r.player]).sort((a,b)=>b[0]-a[0]).slice(0,3);
+  const sel=SCSEL!=null?xi[SCSEL]:null;
+  const dots=xi.map((r,i)=>{
+    if(!r)return "";
+    const s=slots[i]||{x:280,y:110};
+    const ring=gateRing(r)?`stroke="var(--accent)" stroke-width="3"`:(SCSEL===i?`stroke="var(--blue)" stroke-width="2.5"`:"");
+    const prs=(((r.stats||{}).fpl||{}).prs)||"";
+    const nm=(r.fpl_name||r.player).split(" ").slice(-1)[0].slice(0,11);
+    const share=(((r.stats||{}).fpl||{}).xgi_share)||0;
+    return `<g style="cursor:pointer" onclick="SCSEL=${i};SCTAB='profile';render()">
+      <circle cx="${s.x}" cy="${s.y}" r="${gateRing(r)?13:11}" fill="${r.position==="GK"?"#f5e642":formCol(r)}" ${ring}/>
+      <text x="${s.x}" y="${s.y+3.5}" font-size="10" font-weight="bold" text-anchor="middle" fill="#0b0f16">${prs}</text>
+      <text x="${s.x}" y="${s.y-17}" font-size="9.5" text-anchor="middle" fill="${gateRing(r)?"var(--accent)":"#c3ccda"}">${esc(nm)}${share>=0.28?" ⚠":""}</text></g>`;
+  }).join("");
+  const drawer=(id,label,summary,body)=>`
+    <div class="rowbtn" style="background:${SCDRAWER===id?"#1b2432":"var(--panel)"};border:1px solid ${SCDRAWER===id?"var(--accent)":"var(--border)"};border-radius:9px;padding:8px 10px;cursor:pointer" onclick="SCDRAWER=SCDRAWER==='${id}'?null:'${id}';render()">
+      <div style="font-size:10.5px;letter-spacing:.05em;color:${SCDRAWER===id?"var(--accent)":"#5d6879"}">${label} ${SCDRAWER===id?"▾":"▸"}</div>
+      <div class="small" style="color:var(--muted);margin-top:2px">${summary}</div></div>`;
+  let drawerBody="";
+  if(SCDRAWER==="dep"){
+    drawerBody=`<b>Dependency.</b> ${shares.map(([v,n])=>`${esc(n)} <b style="color:${v>=0.28?"var(--red)":"var(--text)"}">${(v*100).toFixed(0)}%</b>${v>=0.28?" ⚠":""}`).join(" · ")}. Alarm line 28% — carriers above it missing = reprice everything (cascade rule). Tap a ringed player on the pitch for his gate details.`;
+  } else if(SCDRAWER==="shapes"){
+    const f26=(TPST[SCTEAM]||{}).formation||{};
+    const list=Object.entries(f26).sort((a,b)=>(+b[1].time||0)-(+a[1].time||0)).map(([k,v])=>`${k} — ${Math.round(v.time)} min (xG ${(+v.xG||0).toFixed(1)} for / ${(+((v.against||{}).xG)||0).toFixed(1)} against)`).join(" · ")||"one shape so far";
+    drawerBody=`<b>Shapes this season.</b> ${list}. Off-ball read: <b>${offSh}</b> — ${esc(offNote)} <span class="muted">(off-ball shapes are curated match study, refined weekly via the formation log)</span>.`;
+  } else if(SCDRAWER==="news"){
+    const items=(DNEWS||[]).filter(n=>(n.teams||[]).includes(SCTEAM)).slice(0,4);
+    drawerBody=items.length?("<b>News.</b> "+items.map(n=>esc(n.headline)).join(" · ")):"<b>News.</b> No current flags for this squad.";
+  }
+  let panel="";
+  if(sel){
+    const m=meters(sel,SCTEAM); const a=(sel.stats||{}).season_25_26; const b=(sel.stats||{}).season_26_27; const fpl=(sel.stats||{}).fpl||{};
+    const meter=(lab,v,col)=>`<div class="flex" style="gap:8px;margin-top:4px;align-items:center"><span class="small" style="width:64px;color:#5d6879;font-size:10.5px">${lab}</span>
+      <div style="flex:1;height:7px;background:#0b1119;border-radius:4px"><div style="width:${v}%;height:7px;background:${col};border-radius:4px"></div></div>
+      <span class="small num" style="width:30px;text-align:right;font-size:10.5px">${v}</span></div>`;
+    const cands=(PPROF[SCTEAM]||[]).filter(p=>p.player!==sel.player && p.position===sel.position && !xi.some(x=>x&&x.player===p.player)).sort((x,y)=>pMins(y)-pMins(x)).slice(0,4);
+    panel=`<div class="panel" style="margin:0">
+      <div class="flex" style="gap:6px;margin-bottom:7px">
+        <button class="btn ghost sm" style="${SCTAB==="profile"?"border-color:var(--accent);color:var(--accent)":""}" onclick="SCTAB='profile';render()">profile</button>
+        <button class="btn ghost sm" style="${SCTAB==="swap"?"border-color:var(--accent);color:var(--accent)":""}" onclick="SCTAB='swap';render()">swap ⇄</button>
+        <button class="btn ghost sm right" onclick="SCSEL=null;render()">✕</button></div>
+      ${SCTAB==="profile"?`
+      <div style="font-size:14px;font-weight:600">${esc(sel.player)} <span class="small muted">${esc(sel.position)}${fpl.prs?" · PRS "+fpl.prs:""}</span></div>
+      <div class="small" style="color:var(--blue);margin:2px 0 6px">TYPE: ${esc(ptype(sel))}</div>
+      ${gateRing(sel)?`<div class="small" style="color:var(--red);margin-bottom:6px">⚠ ${((fpl.xgi_share||0)*100).toFixed(0)}% of team xGI${fpl.news?" · "+esc(String(fpl.news).slice(0,60)):""}</div>`:""}
+      <p class="small" style="margin:0 0 6px;line-height:1.65">${esc(sel.how_he_plays||"")}</p>
+      ${meter("PRESSING",m.press,m.press>=60?"var(--green)":m.press<=35?"var(--red)":"#8b97ab")}
+      ${meter("CREATION",m.creation,m.creation>=60?"var(--green)":"#8b97ab")}
+      ${meter("DUELS",m.duels,"#8b97ab")}
+      <div class="small" style="color:#5d6879;border-top:1px solid var(--border);margin-top:7px;padding-top:5px">
+        ${a?`25-26${a.team_then&&a.team_then!==SCTEAM?" ("+esc(a.team_then)+")":""}: ${a.mins}min · ${a.goals}G ${a.assists}A · xG ${a.xG} xA ${a.xA}${a.xG90!=null?` · xG90 ${a.xG90} · xA90 ${a.xA90} · KP90 ${a.kp90}`:""}`:"25-26: no league data"}
+        ${b?`<br>26-27: ${b.mins}min · ${b.goals}G ${b.assists}A · xG ${b.xG}`:""}</div>
+      ${(sel.strengths||[]).length?`<div class="small" style="margin-top:6px"><span class="pos">+</span> ${sel.strengths.map(esc).join(" · ")}</div>`:""}
+      ${(sel.weaknesses||[]).length?`<div class="small" style="margin-top:3px"><span class="neg">−</span> ${sel.weaknesses.map(esc).join(" · ")}</div>`:""}
+      ${sel.backup?`<div class="detail" style="margin-top:7px;padding:7px 9px"><span class="small" style="color:#5d6879">SUB:</span> <span class="small">${esc(sel.backup)}${sel.backup_note?" — "+esc(sel.backup_note):""}</span></div>`:""}`
+      :`
+      <div class="small" style="margin-bottom:7px"><b>Swap ${esc(sel.player)}</b> <span class="muted">— who takes the slot, and what changes</span></div>
+      ${cands.length?cands.map(c=>{const [tag,tc,tb]=simTag(sel,c);return `
+        <div class="detail rowbtn" style="padding:8px 10px;margin:5px 0;cursor:pointer" onclick="SCSWAP[${SCSEL}]='${c.player.replace(/'/g,"\\'")}';SCSEL=null;render()">
+          <div class="flex"><span style="font-size:13px"><b>${esc(c.player)}</b> <span class="muted small">${esc(c.position)}${(((c.stats||{}).fpl||{}).prs)?" · PRS "+c.stats.fpl.prs:""}</span></span>
+          <span class="right" style="font-size:10px;background:${tb};color:${tc};padding:2px 8px;border-radius:20px">${tag}</span></div>
+          <div class="small muted" style="margin-top:3px">${esc(swapDelta(sel,c))}</div></div>`;}).join("")
+      :'<p class="small muted">No same-position options in the profiled squad.</p>'}
+      ${Object.keys(SCSWAP).length?`<button class="btn ghost sm" style="margin-top:6px" onclick="SCSWAP={};render()">reset XI</button>`:""}`}
+    </div>`;
+  } else {
+    panel=`<div class="panel" style="margin:0"><p class="small muted" style="margin:0">Tap any player for his full profile — type, meters, both seasons, strengths, weaknesses, and swap options. Amber ring = a gate (28%+ share or a news flag). Dot color = form; number = PRS.</p></div>`;
+  }
+  return `
+  <div class="panel" style="margin-top:0;padding:12px 14px">
+    <div class="flex" style="gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="btn ghost sm" onclick="SCTEAM=null;render()">← clubs</button>
+      <b style="font-size:15px">${esc(SCTEAM)}</b>
+      <span class="num" style="color:var(--accent)">${esc(sh)}</span>
+      <span style="display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden">
+        <button onclick="SCPHASE='on';SCSWAP={};render()" style="font-size:11px;padding:4px 11px;border:none;cursor:pointer;background:${SCPHASE==="on"?"#1b2432":"transparent"};color:${SCPHASE==="on"?"var(--accent)":"var(--muted)"}">on the ball</button>
+        <button onclick="SCPHASE='off';SCSWAP={};render()" style="font-size:11px;padding:4px 11px;border:none;cursor:pointer;background:${SCPHASE==="off"?"#1b2432":"transparent"};color:${SCPHASE==="off"?"var(--accent)":"var(--muted)"}">off the ball</button>
+      </span>
+      ${fx?`<span class="small right" style="color:var(--muted)">next: ${esc(opp)} ${fx.team_h_name===SCTEAM?"(H)":"(A)"} · ${collision(SCTEAM,opp)}</span>`:""}
+    </div>
+    ${SCPHASE==="off"?`<p class="small" style="margin:6px 0 0;color:#5d6879">off-ball read: ${esc(offNote)} · curated from match study, not a feed</p>`:""}
+  </div>
+  <div class="grid" style="grid-template-columns:1.5fr 1fr;gap:10px;margin-top:10px;align-items:start">
+    <div>
+      <svg viewBox="0 0 560 220" style="width:100%;background:#12324a;border-radius:10px">
+        <rect x="4" y="4" width="552" height="212" fill="none" stroke="#2a5b7a" stroke-width="1.5"/>
+        <line x1="280" y1="4" x2="280" y2="216" stroke="#2a5b7a"/><circle cx="280" cy="110" r="28" fill="none" stroke="#2a5b7a"/>
+        <rect x="4" y="60" width="44" height="100" fill="none" stroke="#2a5b7a"/><rect x="512" y="60" width="44" height="100" fill="none" stroke="#2a5b7a"/>
+        ${dots}
+      </svg>
+      <div class="flex small" style="gap:8px;margin-top:5px;color:#4d5766;font-size:10.5px;flex-wrap:wrap">
+        <span>dot=form:</span><span style="color:var(--green)">● hot</span><span style="color:#8b97ab">● steady</span><span style="color:var(--red)">● cold</span>
+        <span>· number=PRS · <span style="color:var(--accent)">ring=gate</span>${Object.keys(SCSWAP).length?` · <span style="color:var(--blue)">XI edited</span>`:""}</span></div>
+      <div class="flex" style="gap:6px;margin-top:7px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:10.5px;color:#4d5766">BENCH</span>
+        ${bench.slice(0,8).map(b2=>`<span class="rowbtn" style="font-size:11px;background:var(--panel);color:var(--muted);padding:3px 9px;border-radius:20px;cursor:pointer" onclick="toast('Tap a starter on the pitch first, then use swap ⇄')">${esc((b2.fpl_name||b2.player).split(" ").slice(-1)[0])}${(((b2.stats||{}).fpl||{}).prs)?" "+b2.stats.fpl.prs:""}</span>`).join("")}
+      </div>
+      <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:9px">
+        ${drawer("dep","DEPENDENCY",shares.filter(s=>s[0]).map(([v,n])=>`${esc(n.split(" ").slice(-1)[0])} ${(v*100).toFixed(0)}%`).join(" · ")||"—")}
+        ${drawer("shapes","SHAPES",esc(onSh)+" · off: "+esc(offSh))}
+        ${drawer("news","NEWS",((DNEWS||[]).filter(n=>(n.teams||[]).includes(SCTEAM)).length||"no")+" flags")}
+      </div>
+      ${SCDRAWER?`<div style="background:#10141d;border:1px solid var(--line);border-radius:0 0 10px 10px;padding:10px 14px;margin-top:2px"><div class="small" style="line-height:1.8;color:var(--muted)">${drawerBody}</div></div>`:""}
+    </div>
+    ${panel}
+  </div>`;
+}
 function vScout(){
   if(!scoutTeam){
     const clubs=[...DB.plt].sort((a,b)=>a.name.localeCompare(b.name));
