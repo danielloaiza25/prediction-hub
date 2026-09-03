@@ -2423,7 +2423,8 @@ async function loadScout(team){
   if(!TPST[team]){ try{ const r=await api("team_profiles?season=eq.2026-27&select=team,stats"); for(const t of r)TPST[t.team]=t.stats||{}; }catch(e){} }
   render();
 }
-function normName(s){ return String(s||"").normalize("NFKD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z ]/g,"").trim(); }
+const NCHARS={"\u00d8":"O","\u00f8":"o","\u0110":"D","\u0111":"d","\u0141":"L","\u0142":"l","\u00df":"ss","\u0131":"i"};
+function normName(s){ s=String(s||"").replace(/[\u00d8\u00f8\u0110\u0111\u0141\u0142\u00df\u0131]/g,c=>NCHARS[c]||c); return s.normalize("NFKD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z ]/g,"").trim(); }
 function profFor(team,name){
   const n=normName(name), ln=n.split(" ").slice(-1)[0];
   const ps=PPROF[team]||[];
