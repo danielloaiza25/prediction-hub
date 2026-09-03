@@ -180,6 +180,7 @@ function render(){
   else if(TAB==="predictions") m.innerHTML=vPredictions();
   else if(TAB==="fixtures") m.innerHTML=vFixtures();
   else if(TAB==="news") m.innerHTML=vNews();
+  else if(TAB==="match") m.innerHTML=vMatch();
   else if(TAB==="bankroll") m.innerHTML=vBankroll();
   else if(TAB==="pltable"){renderPLTable();return;}
   else if(TAB==="autopsies"){renderAutopsies();return;}
@@ -236,7 +237,7 @@ function plBanner(){
     const body=f.team_h_score==null
       ? `${abbr(f.team_h_name)} <span style="color:#4d5766">v</span> ${abbr(f.team_a_name)}`
       : `${abbr(f.team_h_name)} <b style="color:var(--text)">${f.team_h_score}</b> &#8212; <b style="color:var(--text)">${f.team_a_score}</b> ${abbr(f.team_a_name)}`;
-    return `<div style="background:#0b1119;border:1px solid #1f2836;border-radius:10px;padding:8px 11px;min-width:0">
+    return `<div style="background:#0b1119;border:1px solid #1f2836;border-radius:10px;padding:8px 11px;min-width:0;cursor:pointer" onclick="openMatch(${f.id})">
       <div style="font-size:10.5px;letter-spacing:.05em;margin-bottom:3px;white-space:nowrap;overflow:hidden">${head}</div>
       <div style="font-size:13px;color:${f.team_h_score==null?"var(--muted)":"#c3ccda"};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${body}</div></div>`;
   };
@@ -2335,6 +2336,281 @@ function vProfile(){
 
 /* ---------- SCOUTING REPORT ---------- */
 let scoutTeam=null;
+/* ---------- MATCH REPORT ---------- */
+let MRFID=null, MRTAB="duels", MRZONE=null, MRSEL=null, MRPHASE=null, MRWX=null, MRH2H=null, MRPAPER=null, MRVERD=null, MRREAD=null, MRLOADED={};
+const TEAMCOL={"Arsenal":"#ef4444","Aston Villa":"#7c3aed","Bournemouth":"#dc2626","Brentford":"#ef4444","Brighton":"#3b82f6","Chelsea":"#2563eb","Coventry City":"#38bdf8","Crystal Palace":"#a855f7","Everton":"#2563eb","Fulham":"#e5e7eb","Hull City":"#f59e0b","Ipswich Town":"#3b82f6","Leeds":"#facc15","Liverpool":"#ef4444","Man City":"#7dd3fc","Man Utd":"#ef4444","Newcastle":"#e5e7eb","Nott'm Forest":"#ef4444","Spurs":"#e5e7eb","Sunderland":"#ef4444"};
+const STADIUM={"Arsenal":[51.555,-0.108],"Aston Villa":[52.509,-1.885],"Bournemouth":[50.735,-1.838],"Brentford":[51.491,-0.289],"Brighton":[50.862,-0.083],"Chelsea":[51.482,-0.191],"Coventry City":[52.448,-1.495],"Crystal Palace":[51.398,-0.086],"Everton":[53.407,-2.988],"Fulham":[51.475,-0.222],"Hull City":[53.746,-0.368],"Ipswich Town":[52.055,1.145],"Leeds":[53.778,-1.572],"Liverpool":[53.431,-2.961],"Man City":[53.483,-2.200],"Man Utd":[53.463,-2.291],"Newcastle":[54.976,-1.622],"Nott'm Forest":[52.940,-1.133],"Spurs":[51.604,-0.066],"Sunderland":[54.914,-1.388]};
+function openMatch(fid){ MRFID=fid; MRTAB="duels"; MRZONE=null; MRSEL=null; MRPHASE=null; MRWX=null; MRH2H=null; MRPAPER=null; MRVERD=null; MRREAD=null; go("match"); loadMatch(); }
+async function loadMatch(){
+  const f=getFx(MRFID); if(!f) return;
+  const teams=[f.team_h_name,f.team_a_name];
+  for(const t of teams){
+    if(!PPROF[t]) PPROF[t]=await api("player_profiles?team=eq."+encodeURIComponent(t)+"&select=*");
+    if(!LINEUP[t]){ const r=await api("lineups?team=eq."+encodeURIComponent(t)+"&select=*"); LINEUP[t]=r[0]||null; }
+    if(!DOSS) { DOSS={}; try{ await ensureDossiers(); }catch(e){} }
+  }
+  if(!Object.keys(TPST).length){ try{ const r=await api("team_profiles?season=eq.2026-27&select=team,stats"); for(const t of r)TPST[t.team]=t.stats||{}; }catch(e){} }
+  try{ const p=await api("paper_picks?fixture_id=eq."+MRFID+"&select=*"); MRPAPER=p[0]||null; }catch(e){}
+  try{ MRVERD=await api("verdicts?match=eq."+encodeURIComponent(f.team_h_name+" vs "+f.team_a_name)+"&select=*"); }catch(e){}
+  try{ const r=await api("match_reads?fixture_id=eq."+MRFID+"&select=*"); MRREAD=r[0]||null; }catch(e){}
+  if(DNEWS===null){ try{ DNEWS=await api("news_items?select=*&order=published_at.desc&limit=60"); }catch(e){ DNEWS=[]; } }
+  render();
+  const co=STADIUM[f.team_h_name];
+  if(co&&!MRWX){ try{
+    const d=new Date(f.kickoff); const day=d.toISOString().slice(0,10); const hr=d.getUTCHours();
+    const w=await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${co[0]}&longitude=${co[1]}&hourly=temperature_2m,precipitation,wind_speed_10m&start_date=${day}&end_date=${day}`)).json();
+    const i=Math.min(hr,(w.hourly&&w.hourly.time?w.hourly.time.length:1)-1);
+    if(w.hourly) MRWX={t:Math.round(w.hourly.temperature_2m[i]),rain:+(w.hourly.precipitation[i]||0),wind:Math.round(w.hourly.wind_speed_10m[i]||0)};
+  }catch(e){ MRWX={err:1}; } render(); }
+  if(!MRH2H){ try{
+    const q=`or=(and(home.eq.${encodeURIComponent(f.team_h_name)},away.eq.${encodeURIComponent(f.team_a_name)}),and(home.eq.${encodeURIComponent(f.team_a_name)},away.eq.${encodeURIComponent(f.team_h_name)}))`;
+    MRH2H=await api(`pl_history?${q}&select=season,home,away,hg,ag&order=season.desc&limit=6`);
+  }catch(e){ MRH2H=[]; } render(); }
+}
+function mrProf(team,name){ return profFor(team,name); }
+function mrLaneOf(pos,side){
+  const sr=sideRank(pos);
+  const lane = sr<=1?0 : sr>=3?2 : 1;
+  return side==="a" ? (2-lane) : lane;
+}
+function mrEA(p,k){ const F=((p||{}).stats||{}).fifa||{}; return (F.EA||{})[k]; }
+function mrMeas(p,k){ const F=((p||{}).stats||{}).fifa||{}; return (F[k]||{}).r; }
+function mrStatRows(A,B){
+  const rows=[];
+  const push=(lab,va,vb,tag)=>{ if(va==null&&vb==null)return; rows.push({lab,va,vb,tag}); };
+  push("PACE",mrEA(A,"pac"),mrEA(B,"pac"),"EA");
+  push("CREATION",mrMeas(A,"CRE")!=null?mrMeas(A,"CRE"):mrEA(A,"pas"),mrMeas(B,"CRE")!=null?mrMeas(B,"CRE"):mrEA(B,"pas"),mrMeas(A,"CRE")!=null?"":"EA");
+  push("SHOOTING",mrMeas(A,"SHO")!=null?mrMeas(A,"SHO"):mrEA(A,"sho"),mrMeas(B,"SHO")!=null?mrMeas(B,"SHO"):mrEA(B,"sho"),mrMeas(A,"SHO")!=null?"":"EA");
+  push("DEFENDING",mrMeas(A,"DEF")!=null?mrMeas(A,"DEF"):mrEA(A,"def"),mrMeas(B,"DEF")!=null?mrMeas(B,"DEF"):mrEA(B,"def"),mrMeas(A,"DEF")!=null?"":"EA");
+  push("PHYSICAL",mrEA(A,"phy"),mrEA(B,"phy"),"EA");
+  return rows;
+}
+function mrDuelPanel(f, aName, aTeam, aPos, bName, bTeam, bPos, title){
+  const A=mrProf(aTeam,aName), B=mrProf(bTeam,bName);
+  const rows=mrStatRows(A,B);
+  const cell=(v,win)=>v==null?'<b style="color:#3a4557;padding:1px 8px">—</b>':(win?`<b style="color:var(--green);background:rgba(46,204,113,.12);padding:1px 8px;border-radius:4px">${v}</b>`:`<b style="color:var(--muted);padding:1px 8px">${v}</b>`);
+  const ta=A?ptypeM(A):"no profile", tb=B?ptypeM(B):"no profile";
+  let verdict="";
+  const pa=mrEA(A,"pac"), pb=mrEA(B,"pac");
+  if(pa!=null&&pb!=null){ if(Math.abs(pa-pb)<=5) verdict="speed war — even legs, first touch decides"; else if(pa>pb) verdict=`${esc(aName.split(" ").slice(-1)[0])} has the legs (+${pa-pb} pace) — expect him hunted with early balls`; else verdict=`${esc(bName.split(" ").slice(-1)[0])} has the legs (+${pb-pa} pace) — the duel favors the defender-side recovery`; }
+  const gates=[A,B].filter(p=>p&&gateRing(p)).map(p=>p.player.split(" ").slice(-1)[0]+" is a gate player");
+  return `<div style="background:#10141d;border:1px solid var(--accent);border-radius:0 0 10px 10px;padding:10px 14px;margin-top:2px">
+    <div class="flex small" style="color:var(--text);margin-bottom:6px"><b>${esc(title)}</b>
+      <button class="btn ghost sm right" style="padding:1px 8px" onclick="MRZONE=null;MRSEL=null;render()">✕</button></div>
+    <div class="grid" style="grid-template-columns:1fr 74px 1fr;gap:4px;font-size:10.5px;align-items:center">
+      <div style="text-align:right;color:var(--muted)">${esc(aName)} <span style="color:#4d5766">${esc(aPos||"")}</span></div><div style="text-align:center;color:#4d5766">WHO</div><div style="color:var(--muted)">${esc(bName)} <span style="color:#4d5766">${esc(bPos||"")}</span></div>
+      <div style="text-align:right;color:#8b97ab">${esc(ta)}</div><div style="text-align:center;color:#4d5766">TYPE</div><div style="color:#8b97ab">${esc(tb)}</div>
+      ${rows.map(r=>`<div style="text-align:right">${cell(r.va,r.va!=null&&r.vb!=null&&r.va>r.vb)}</div><div style="text-align:center;color:#4d5766">${r.lab}${r.tag?' <span style="font-size:8px;border:1px solid #26303f;border-radius:3px;padding:0 2px">'+r.tag+'</span>':""}</div><div>${cell(r.vb,r.va!=null&&r.vb!=null&&r.vb>r.va)}</div>`).join("")}
+    </div>
+    ${verdict?`<div class="small" style="color:var(--accent);margin-top:6px">Verdict: ${verdict}${gates.length?" · ⚠ "+gates.join(", "):""}</div>`:""}
+  </div>`;
+}
+function ptypeM(r){
+  const a=(r.stats||{}).season_25_26||{}; const F=((r.stats||{}).fifa||{});
+  if(r.position==="GK")return "goalkeeper";
+  if(r.position==="DEF")return (a.xG90||0)>0.08?"ball-playing defender":"defender";
+  const cre=(F.CRE||{}).r||0, sho=(F.SHO||{}).r||0;
+  if(cre>=65&&sho>=60)return "creator-shooter";
+  if(cre>=65)return "creator";
+  if((a.shots90||0)>=2.4)return "shot-volume attacker";
+  if(r.position==="FWD")return (a.xG90||0)>=0.45?"penalty-box striker":"pressing forward";
+  return "engine midfielder";
+}
+function mrPitchNeutral(f, hL, aL){
+  const W=560,H=200;
+  const zone=(y0,h2,i,lab)=>`<rect x="5" y="${y0}" width="550" height="${h2}" fill="${MRZONE===i?"var(--accent)":"transparent"}" opacity="${MRZONE===i?"0.13":"1"}" stroke="${MRZONE===i?"var(--accent)":"#2a5b7a"}" stroke-width="${MRZONE===i?1.2:0.4}" stroke-dasharray="${MRZONE===i?"5 4":"2 6"}" style="cursor:pointer" onclick="MRZONE=${i};MRSEL=null;MRTAB='duels';render()"/><text x="12" y="${y0+12}" font-size="8" fill="${MRZONE===i?"var(--accent)":"#3f6a8a"}" style="pointer-events:none">${lab}</text>`;
+  const dots=(L,team,side)=>{
+    if(!L)return "";
+    const ls=lineupSlots(L);
+    return ls.map((s,i)=>{
+      const x= side==="h" ? s.x*0.47+8 : 552-(s.x*0.47+8);
+      const y= s.y*(H-20)/220+10;
+      const pr=mrProf(team,s.p.player);
+      const gate=pr&&gateRing(pr);
+      const col=s.p.pos==="GK"?"#f5e642":(pr?formCol(pr):"#8b97ab");
+      const nm=(s.p.player.split(" ").slice(-1)[0]).slice(0,10);
+      return `<g style="cursor:pointer" onclick="MRSEL='${side}|${i}';MRZONE=null;MRTAB='duels';render()">
+        <circle cx="${x.toFixed(0)}" cy="${y.toFixed(0)}" r="${gate?10:8.5}" fill="${col}" ${gate?'stroke="var(--accent)" stroke-width="2.5"':(MRSEL===side+"|"+i?'stroke="var(--blue)" stroke-width="2"':"")}/>
+        <text x="${x.toFixed(0)}" y="${(y-13).toFixed(0)}" font-size="8" text-anchor="middle" fill="${gate?"var(--accent)":"#c3ccda"}">${esc(nm)}${gate?" ⚠":""}</text></g>`;
+    }).join("");
+  };
+  return `<svg viewBox="0 0 560 ${H}" style="width:100%;background:#12324a;border-radius:0 0 10px 10px">
+    <rect x="4" y="4" width="552" height="${H-8}" fill="none" stroke="#2a5b7a" stroke-width="1.5"/>
+    <line x1="280" y1="4" x2="280" y2="${H-4}" stroke="#2a5b7a"/><circle cx="280" cy="${H/2}" r="22" fill="none" stroke="#2a5b7a"/>
+    ${zone(5,(H-10)/3,0,"LEFT LANE")}${zone(5+(H-10)/3,(H-10)/3,1,"CENTER")}${zone(5+2*(H-10)/3,(H-10)/3,2,"RIGHT LANE")}
+    ${dots(hL,f.team_h_name,"h")}${dots(aL,f.team_a_name,"a")}
+  </svg>`;
+}
+function mrPitchPhase(f, hL, aL){
+  const atkSide=MRPHASE; const defSide=atkSide==="h"?"a":"h";
+  const atkTeam=atkSide==="h"?f.team_h_name:f.team_a_name;
+  const defTeam=defSide==="h"?f.team_h_name:f.team_a_name;
+  const atkL=atkSide==="h"?hL:aL, defL=defSide==="h"?hL:aL;
+  const W=560,H=200;
+  const defGoalX= defSide==="h" ? 0 : 560;
+  const dir= defSide==="h" ? 1 : -1;
+  const [offSh,offNote]=OFFSHAPE[defTeam]||["4-4-2",""];
+  const atkCol=TEAMCOL[atkTeam]||"#ef4444";
+  let out="";
+  if(defL){
+    const slots=lineupSlots(defL);
+    out+=slots.map((s,i)=>{
+      const depth=(s.x-38)/(470-38);
+      const x= defGoalX + dir*(18 + depth*150);
+      const y= s.y*(H-24)/220+12;
+      const pts=`${x},${y-8} ${x-7},${y+6} ${x+7},${y+6}`;
+      return `<g style="cursor:pointer" onclick="MRSEL='${defSide}|${i}';render()"><polygon points="${pts}" fill="#8b97ab" ${MRSEL===defSide+"|"+i?'stroke="var(--blue)" stroke-width="2"':'stroke="#0b0f16" stroke-width="0.5"'}/></g>`;
+    }).join("");
+  }
+  if(atkL){
+    const slots=lineupSlots(atkL);
+    out+=slots.map((s,i)=>{
+      const depth=(s.x-38)/(470-38);
+      let x,y=s.y*(H-24)/220+12;
+      if(depth<0.12){ x= defGoalX + dir*440; }
+      else if(depth<0.42){ x= defGoalX + dir*(330 - (depth-0.12)*260); y=(y-H/2)*0.85+H/2; }
+      else { x= defGoalX + dir*(215 - (depth-0.42)*230); }
+      const ghost=depth<0.42;
+      return `<g style="cursor:pointer" onclick="MRSEL='${atkSide}|${i}';render()"><circle cx="${x.toFixed(0)}" cy="${y.toFixed(0)}" r="7" fill="${atkCol}" opacity="${ghost?0.35:1}" ${MRSEL===atkSide+"|"+i?'stroke="var(--blue)" stroke-width="2"':'stroke="#0b0f16" stroke-width="0.5"'}/></g>`;
+    }).join("");
+  }
+  const noteX = defSide==="h" ? 400 : 160;
+  return `<svg viewBox="0 0 560 ${H}" style="width:100%;background:#12324a;border-radius:0 0 10px 10px">
+    <rect x="4" y="4" width="552" height="${H-8}" fill="none" stroke="#2a5b7a" stroke-width="1.5"/>
+    <line x1="280" y1="4" x2="280" y2="${H-4}" stroke="#2a5b7a"/>
+    <rect x="${defSide==="h"?5:335}" y="5" width="220" height="${H-10}" fill="#e74c5b" opacity="0.05" style="cursor:pointer" onclick="MRPHASE=null;MRSEL=null;render()"/>
+    <text x="${noteX}" y="${H-12}" font-size="8.5" fill="#3f6a8a" text-anchor="middle">ghosted = ${esc(atkTeam)} rest-defense · click open pitch = back to neutral</text>
+    ${out}
+  </svg>
+  <p class="small" style="margin:5px 0 0;color:#5d6879">● ${esc(atkTeam)} attacking (${esc(LINEUP[atkTeam]?fmtLabel(LINEUP[atkTeam]):"")} on-ball) · ▲ ${esc(defTeam)} defending (${esc(offSh)} — ${esc(offNote)}) · phase shapes = curated match-study reads · tap any marker for the name</p>`;
+}
+function mrStakes(f){
+  const bits=[];
+  const dh=(DOSS||{})[f.team_h_name]||{}, da=(DOSS||{})[f.team_a_name]||{};
+  if(dh.regime&&dh.regime.manager)bits.push(esc(f.team_h_name)+": "+esc(String(dh.regime.manager).split("(")[0].trim()));
+  if(da.regime&&da.regime.manager)bits.push(esc(f.team_a_name)+": "+esc(String(da.regime.manager).split("(")[0].trim()));
+  for(const t of [f.team_h_name,f.team_a_name]){
+    for(const p of (PPROF[t]||[])){ if(gateRing(p)){ const sh=(((p.stats||{}).fpl||{}).xgi_share||0); bits.push(p.player.split(" ").slice(-1)[0]+" = "+(sh>=0.28?"the gate ("+Math.round(sh*100)+"%)":"flagged")); break; } }
+  }
+  if(MRWX&&!MRWX.err){ bits.push(MRWX.t+"°C"+(MRWX.rain>=0.3?" rain — under lean (lab)":MRWX.wind>=35?" strong wind — verify flag":"")); }
+  return bits.slice(0,5).join(" · ");
+}
+function mrSelPanel(f,hL,aL){
+  if(MRZONE!=null){
+    const lanePick=(L,team,side,wantAtk)=>{
+      if(!L)return null;
+      const cands=L.players.map((p,i)=>({p,i,lane:mrLaneOf(p.pos,side),line:posLine(p.pos)})).filter(x=>x.lane===MRZONE&&x.line!=="G");
+      const pref=wantAtk?["AM","F","M","DM","D"]:["D","DM","M","AM","F"];
+      cands.sort((x,y)=>pref.indexOf(x.line)-pref.indexOf(y.line));
+      return cands[0]||null;
+    };
+    const ha=lanePick(hL,f.team_h_name,"h",true), ad=lanePick(aL,f.team_a_name,"a",false);
+    const lanes=["LEFT LANE","CENTER","RIGHT LANE"];
+    if(ha&&ad) return mrDuelPanel(f,ha.p.player,f.team_h_name,ha.p.pos,ad.p.player,f.team_a_name,ad.p.pos,lanes[MRZONE]+" DUEL — attacker v his direct defender");
+    return `<div class="detail"><p class="small muted" style="margin:0">Lane data incomplete for this zone.</p></div>`;
+  }
+  if(MRSEL){
+    const [side,idx]=MRSEL.split("|"); const L=side==="h"?hL:aL; const oL=side==="h"?aL:hL;
+    const team=side==="h"?f.team_h_name:f.team_a_name; const oTeam=side==="h"?f.team_a_name:f.team_h_name;
+    const me=L&&L.players[+idx]; if(!me)return "";
+    const myLane=mrLaneOf(me.pos,side);
+    const opps=(oL?oL.players.map((p,i)=>({p,lane:mrLaneOf(p.pos,side==="h"?"a":"h"),line:posLine(p.pos)})):[]).filter(x=>x.lane===myLane&&x.line!=="G");
+    const myLine=posLine(me.pos);
+    const wantLines= myLine==="F"||myLine==="AM" ? ["D","DM"] : myLine==="D"||myLine==="DM" ? ["AM","F","M"] : ["M","DM","AM"];
+    opps.sort((x,y)=>wantLines.indexOf(x.line)-wantLines.indexOf(y.line));
+    const opp=opps[0];
+    if(opp) return mrDuelPanel(f,me.player,team,me.pos,opp.p.player,oTeam,opp.p.pos,me.player.split(" ").slice(-1)[0].toUpperCase()+" — his probable direct opponent");
+    return `<div class="detail"><p class="small" style="margin:0">${esc(me.player)} (${esc(me.pos)}) — no direct opposite in that lane; roams between duels.</p></div>`;
+  }
+  return "";
+}
+function vMatch(){
+  const f=getFx(MRFID);
+  if(!f) return `<div class="panel"><p class="muted">Match not found. <button class="btn sm" onclick="go('dashboard')">back</button></p></div>`;
+  const hL=LINEUP[f.team_h_name], aL=LINEUP[f.team_a_name];
+  const done=fxDone(f);
+  const conf= done ? "FULL TIME "+f.team_h_score+"-"+f.team_a_score : (new Date(f.kickoff)-Date.now()<3.9e6 && (hL&&hL.match_id===String(f.id))) ? "CONFIRMED XIs" : "PROJECTED XIs — from last matches";
+  const teamBtn=(side)=>{
+    const t=side==="h"?f.team_h_name:f.team_a_name;
+    const on=MRPHASE===side;
+    return `<button class="btn ghost sm" style="border-radius:7px 7px 0 0;border-bottom:none;${on?"border-color:var(--accent);color:var(--accent);background:#2a2313":""}" onclick="MRPHASE=MRPHASE==='${side}'?null:'${side}';MRSEL=null;MRZONE=null;render()">${on?"▶ ":""}${esc(t)} <span style="font-size:9px;color:#5d6879">(${side==="h"?"H":"A"})${on?" — attacking":""}</span></button>`;
+  };
+  const filterTeam = MRPHASE ? (MRPHASE==="h"?f.team_h_name:f.team_a_name) : null;
+  let tabBody="";
+  if(MRTAB==="duels"){
+    tabBody = (MRZONE==null&&!MRSEL)?`<p class="small muted" style="margin:0">Click a lane band or any player on the pitch — the duel opens here. Click a team name to stage attack v defense.</p>`:"";
+  } else if(MRTAB==="plans"){
+    const plan=(t,opp)=>{
+      const d=(DOSS||{})[t]||{}; const c=d.card||{};
+      const atk=(c.back||[]).slice(0,2).map(esc).join(" · ")||"—";
+      const leak=(c.fade||[]).slice(0,2).map(esc).join(" · ")||"—";
+      return `<div class="detail" style="margin:5px 0"><b class="small">${esc(t)}</b>
+        <p class="small" style="margin:3px 0 0;color:var(--muted)"><span class="pos">attack:</span> ${atk}</p>
+        <p class="small" style="margin:2px 0 0;color:var(--muted)"><span class="neg">leaks:</span> ${leak}</p>
+        ${d.regime?`<p class="small" style="margin:2px 0 0;color:#5d6879">regime: ${esc(String(d.regime.window||d.regime.manager||"").slice(0,110))}</p>`:""}</div>`;
+    };
+    const ts=filterTeam?[filterTeam]:[f.team_h_name,f.team_a_name];
+    tabBody=ts.map(t=>plan(t)).join("")+(filterTeam?`<p class="small" style="color:#5d6879;margin:4px 0 0">filtered: ${esc(filterTeam)} — click the team name again for both</p>`:"");
+  } else if(MRTAB==="context"){
+    const rest=(t)=>{ const prev=(DB.plf||[]).filter(x=>fxDone(x)&&(x.team_h_name===t||x.team_a_name===t)).sort((a,b)=>new Date(b.kickoff)-new Date(a.kickoff))[0];
+      return prev?Math.round((new Date(f.kickoff)-new Date(prev.kickoff))/864e5):null; };
+    const rh=rest(f.team_h_name), ra=rest(f.team_a_name);
+    const news=(DNEWS||[]).filter(n=>(n.teams||[]).some(t=>t===f.team_h_name||t===f.team_a_name)).slice(0,5);
+    tabBody=`<div class="flex" style="gap:6px;flex-wrap:wrap">
+      <span class="tag pend">${MRWX?(MRWX.err?"weather: fetch failed":MRWX.t+"°C · rain "+MRWX.rain+"mm · wind "+MRWX.wind+"km/h"+(MRWX.rain>=0.3?" → under lean (lab)":"")):"weather loading…"}</span>
+      <span class="tag ${rh!=null&&ra!=null&&Math.abs(rh-ra)>=2?"watch":"pend"}">rest: ${esc(f.team_h_name)} ${rh??"?"}d · ${esc(f.team_a_name)} ${ra??"?"}d${rh!=null&&ra!=null&&Math.abs(rh-ra)>=2?" — edge "+(rh>ra?f.team_h_name:f.team_a_name):" — even"}</span>
+      <span class="tag pend">referee: not announced (R9 watch only)</span></div>
+    ${news.length?news.map(n=>`<div class="detail" style="margin:5px 0;padding:7px 10px"><span class="small">${esc(n.headline)}</span> <span class="small muted">· ${(n.teams||[]).filter(t=>t===f.team_h_name||t===f.team_a_name).map(esc).join(", ")}</span></div>`).join(""):'<p class="small muted" style="margin:6px 0 0">No news flags for either squad.</p>'}`;
+  } else if(MRTAB==="history"){
+    const h2=(MRH2H||[]).map(m=>`<div class="flex small" style="padding:3px 0"><span class="muted" style="width:64px">${esc(m.season)}</span><span style="flex:1">${esc(m.home)} <b class="num">${m.hg}-${m.ag}</b> ${esc(m.away)}</span></div>`).join("");
+    const form=(t)=>{ const ms=(DB.plf||[]).filter(x=>fxDone(x)&&(x.team_h_name===t||x.team_a_name===t)).sort((a,b)=>new Date(b.kickoff)-new Date(a.kickoff)).slice(0,5);
+      return ms.map(m=>{const home=m.team_h_name===t; const gf=home?m.team_h_score:m.team_a_score, ga=home?m.team_a_score:m.team_h_score;
+        const r=gf>ga?"W":gf<ga?"L":"D"; return `<span class="tag ${r==="W"?"hit":r==="L"?"miss":"pend"}" style="padding:1px 6px">${r} ${gf}-${ga}</span>`;}).join(" ");};
+    const gs=(t)=>{ const d=(DOSS||{})[t]||{}; const fg=d.first_goal||{}; return (fg.scored?`after scoring first ${fg.scored.ppg} PPG`:"")+(fg.conceded?` · after conceding ${fg.conceded.ppg} PPG`:""); };
+    tabBody=`<b class="small">Head to head (league)</b>${h2||'<p class="small muted">No meetings in our 5-season window.</p>'}
+    <div style="margin-top:8px"><b class="small">${esc(f.team_h_name)}</b> <span class="small">${form(f.team_h_name)||"—"}</span> <span class="small muted">${gs(f.team_h_name)}</span></div>
+    <div style="margin-top:4px"><b class="small">${esc(f.team_a_name)}</b> <span class="small">${form(f.team_a_name)||"—"}</span> <span class="small muted">${gs(f.team_a_name)}</span></div>`;
+  } else if(MRTAB==="read"){
+    tabBody=`${MRREAD&&MRREAD.dan_read?`<div class="detail" style="border-left:3px solid var(--accent);border-radius:0 10px 10px 0"><p class="small" style="margin:0"><b class="muted">YOUR READ:</b> ${esc(MRREAD.dan_read)}</p></div>`:""}
+    <div class="flex" style="gap:8px;margin-top:6px"><input id="mr_read" placeholder="what do YOU see in this match? (saved & graded post-match)" style="flex:1" value="${esc((MRREAD||{}).dan_read||"")}">
+    <button class="btn sm" onclick="saveMatchRead()">save</button></div>`;
+  }
+  const eng=(()=>{
+    if(!MRPAPER) return `<div class="small muted">Engine has not scanned this match yet.</div>`;
+    const picks=MRPAPER.picks||[];
+    if(!picks.length) return `<div class="small"><b>Engine: PASS</b> — ${esc(MRPAPER.pass_reason||"no edge")}</div>`;
+    return picks.map(k=>{
+      const v=(MRVERD||[]).find(x=>x.bet===k.pick);
+      return `<div class="small" style="margin:3px 0"><b>${esc(k.pick)}</b> — ${k.prob}% ${v?`· <span style="color:${v.verdict==="YES"?"var(--green)":"var(--red)"}">my call ${v.verdict}</span>${v.correct!=null?(v.correct?' <span class="tag hit">right</span>':' <span class="tag miss">wrong</span>'):""}`:""}<br><span class="muted">${esc(k.why||"")}</span></div>`;
+    }).join("")+(MRPAPER.analysis?`<div class="detail" style="margin-top:6px"><p class="small" style="margin:0">${esc(MRPAPER.analysis)}</p></div>`:"");
+  })();
+  return `
+  <div class="panel" style="margin-top:0;padding:10px 14px">
+    <div class="flex"><button class="btn ghost sm" onclick="go('dashboard')">←</button>
+      <b style="font-size:15px">${esc(f.team_h_name)} v ${esc(f.team_a_name)}</b>
+      <span class="small muted">${f.kickoff?new Date(f.kickoff).toLocaleString([],{weekday:"short",hour:"numeric",minute:"2-digit"}):""}</span>
+      <span class="small right" style="color:${done?"var(--green)":"var(--accent)"}">${conf}</span></div>
+    <div class="small" style="margin-top:6px;color:var(--muted)"><b style="color:var(--text)">THE STAKES:</b> ${mrStakes(f)||"loading…"}</div>
+  </div>
+  <div style="margin-top:10px">
+    <div class="flex" style="justify-content:space-between">${teamBtn("h")}<span class="small" style="align-self:center;color:#4d5766">${MRPHASE?"phase view":"click a lane · a player · or a team name"}</span>${teamBtn("a")}</div>
+    ${MRPHASE?mrPitchPhase(f,hL,aL):mrPitchNeutral(f,hL,aL)}
+    ${(!hL||!aL)?`<p class="small" style="color:var(--red);margin:5px 0 0">⚠ ${!hL?esc(f.team_h_name):esc(f.team_a_name)} has no verified lineup stored — panels for that side limited (flagged).</p>`:""}
+    ${mrSelPanel(f,hL,aL)}
+  </div>
+  <div class="flex" style="gap:5px;margin-top:10px">
+    ${["duels","plans","context","history","read"].map(t=>`<button class="btn ghost sm" style="${MRTAB===t?"border-color:var(--accent);color:var(--accent)":""}" onclick="MRTAB='${t}';render()">${t==="read"?"my read":t}</button>`).join("")}
+  </div>
+  <div class="panel" style="margin-top:6px">${tabBody}</div>
+  <div class="panel" style="border-left:3px solid var(--green);border-radius:0 10px 10px 0"><b class="small" style="color:var(--text)">Engine & my calls</b><div style="margin-top:5px">${eng}</div></div>`;
+}
+async function saveMatchRead(){
+  const v=(document.getElementById("mr_read")||{}).value; if(!v){toast("Write something first",false);return;}
+  const f=getFx(MRFID);
+  try{ await api("match_reads?on_conflict=fixture_id",{method:"POST",headers:{Prefer:"resolution=merge-duplicates"},body:[{fixture_id:MRFID,match:f?f.team_h_name+" vs "+f.team_a_name:null,dan_read:v}]});
+    MRREAD={dan_read:v}; toast("Your read is saved — graded after full time"); render();
+  }catch(e){toast(e.message,false)}
+}
 /* ---------- PITCH VIEW (scouting) ---------- */
 let SCTEAM=null, SCPHASE="on", SCSEL=null, SCTAB="profile", SCSWAP={}, SCDRAWER=null, PPROF={}, TPST={}, LINEUP={}, EASHEET=false;
 const SCTEAMS=["Arsenal","Aston Villa","Bournemouth","Brentford","Brighton","Chelsea","Coventry City","Crystal Palace","Everton","Fulham","Hull City","Ipswich Town","Leeds","Liverpool","Man City","Man Utd","Newcastle","Nott'm Forest","Spurs","Sunderland"];
