@@ -2329,7 +2329,7 @@ function vProfile(){
 /* ---------- SCOUTING REPORT ---------- */
 let scoutTeam=null;
 /* ---------- PITCH VIEW (scouting) ---------- */
-let SCTEAM=null, SCPHASE="on", SCSEL=null, SCTAB="profile", SCSWAP={}, SCDRAWER=null, PPROF={}, TPST={}, LINEUP={};
+let SCTEAM=null, SCPHASE="on", SCSEL=null, SCTAB="profile", SCSWAP={}, SCDRAWER=null, PPROF={}, TPST={}, LINEUP={}, EASHEET=false;
 const SCTEAMS=["Arsenal","Aston Villa","Bournemouth","Brentford","Brighton","Chelsea","Coventry City","Crystal Palace","Everton","Fulham","Hull City","Ipswich Town","Leeds","Liverpool","Man City","Man Utd","Newcastle","Nott'm Forest","Spurs","Sunderland"];
 const ONSHAPE={"Arsenal":"4-2-3-1","Man City":"4-2-3-1","Liverpool":"4-2-3-1","Chelsea":"3-4-2-1","Newcastle":"4-2-3-1","Spurs":"4-2-3-1","Brighton":"4-2-3-1","Aston Villa":"4-2-3-1","Nott'm Forest":"3-4-2-1","Crystal Palace":"3-4-2-1","Man Utd":"4-2-3-1","Everton":"4-2-3-1","Brentford":"4-2-3-1","Leeds":"3-4-2-1","Fulham":"4-2-3-1","Bournemouth":"4-2-3-1","Sunderland":"4-2-3-1","Ipswich Town":"4-2-3-1","Coventry City":"4-2-3-1","Hull City":"5-4-1"};
 const OFFSHAPE={"Arsenal":["4-4-2","front two screen, block mid"],"Man City":["4-4-2","Ndiaye tucks; rest-defense the watch"],"Liverpool":["4-2-4","man-jump press: wingers join Isak"],"Chelsea":["5-2-2-1","wing-backs drop; the two 10s trigger"],"Newcastle":["4-4-2","vertical press waves"],"Spurs":["4-4-2","first-pass press"],"Brighton":["4-4-2","feral coordinated jumps"],"Aston Villa":["4-4-2","mid-block, Emery traps"],"Nott'm Forest":["5-2-2-1","ambush block, springs long"],"Crystal Palace":["5-4-1","low block, Nketiah stays"],"Man Utd":["4-4-2","identity forming"],"Everton":["4-4-1-1","the chosen deep block"],"Brentford":["4-4-2","squeeze then drop"],"Leeds":["5-2-2-1","wing-backs drop, tens second wave — NOT the 5-4-1 disaster if it springs"],"Fulham":["4-4-2","new press, net pending"],"Bournemouth":["4-4-2","Rose waves installing"],"Sunderland":["4-4-2","over-station press"],"Ipswich Town":["4-5-1","organized mid-block"],"Coventry City":["4-5-1","survival block"],"Hull City":["5-4-1","the committed block"]};
@@ -2571,6 +2571,16 @@ function vPitch(){
         </div>
         <p class="small" style="margin:5px 0 0;color:#4d5766;font-size:10.5px;line-height:1.6">${subs.map(esc).join(" · ")}</p>
         ${prior?`<p class="small" style="margin:3px 0 0;color:#4d5766;font-size:10.5px">${esc(prior)}</p>`:""}
+        ${EA&&EA.detail?`<div style="margin-top:6px">
+          <button class="btn ghost sm" style="padding:2px 10px;font-size:11px" onclick="EASHEET=!EASHEET;render()">${EASHEET?"hide":"full EA attribute sheet"} ${EASHEET?"▴":"▸"}</button>
+          ${EASHEET?Object.entries(EA.detail).filter(([g,vals])=>g!=="goalkeeping"||sel.position==="GK").map(([g,vals])=>`
+            <div style="margin-top:6px"><div style="font-size:9.5px;letter-spacing:.07em;color:#4d5766;text-transform:uppercase">${esc(g)}</div>
+            <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;margin-top:3px">
+              ${Object.entries(vals).map(([k,v])=>`<div style="display:flex;justify-content:space-between;background:#0b1119;border-radius:5px;padding:3px 8px">
+                <span style="font-size:10px;color:#5d6879">${esc(k.replace(/_/g," "))}</span>
+                <b class="num" style="font-size:11px;color:${v>=75?"var(--green)":v<=50?"var(--red)":"#8b97ab"}">${v}</b></div>`).join("")}
+            </div></div>`).join("")+`<p class="small" style="margin:4px 0 0;color:#4d5766;font-size:9.5px">all EA FC 26 editorial values — same sheet for every rated player</p>`:""}
+        </div>`:""}
         <p class="small" style="margin:3px 0 0;color:#4d5766;font-size:10.5px;line-height:1.6">Plain numbers = league percentiles from MEASURED event data. <b>EA-tagged = EA FC 26 editorial ratings</b> — expert-judged, not measured; used where no measured feed exists (PAC and PHY always). MENTALITY: not measurable${facts.penalty_duty?" · takes penalties":""}${facts.yellows!=null?" · "+facts.yellows+" yellows":""}${EA&&EA.composure!=null?" · EA composure "+EA.composure+" / aggression "+EA.aggression:""} — see notes.</p>
         </div>`; })()}
       ${meter("PRESSING",m.press,m.press>=60?"var(--green)":m.press<=35?"var(--red)":"#8b97ab")}
