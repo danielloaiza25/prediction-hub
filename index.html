@@ -2254,7 +2254,7 @@ function vProfile(){
 /* ---------- SCOUTING REPORT ---------- */
 let scoutTeam=null;
 /* ---------- PITCH VIEW (scouting) ---------- */
-let SCTEAM=null, SCPHASE="on", SCSEL=null, SCTAB="profile", SCSWAP={}, SCDRAWER=null, PPROF={}, TPST={};
+let SCTEAM=null, SCPHASE="on", SCSEL=null, SCTAB="profile", SCSWAP={}, SCDRAWER=null, PPROF={}, TPST={}, LINEUP={};
 const SCTEAMS=["Arsenal","Aston Villa","Bournemouth","Brentford","Brighton","Chelsea","Coventry City","Crystal Palace","Everton","Fulham","Hull City","Ipswich Town","Leeds","Liverpool","Man City","Man Utd","Newcastle","Nott'm Forest","Spurs","Sunderland"];
 const ONSHAPE={"Arsenal":"4-2-3-1","Man City":"4-2-3-1","Liverpool":"4-2-3-1","Chelsea":"3-4-2-1","Newcastle":"4-2-3-1","Spurs":"4-2-3-1","Brighton":"4-2-3-1","Aston Villa":"4-2-3-1","Nott'm Forest":"3-4-2-1","Crystal Palace":"3-4-2-1","Man Utd":"4-2-3-1","Everton":"4-2-3-1","Brentford":"4-2-3-1","Leeds":"3-4-2-1","Fulham":"4-2-3-1","Bournemouth":"4-2-3-1","Sunderland":"4-2-3-1","Ipswich Town":"4-2-3-1","Coventry City":"4-2-3-1","Hull City":"5-4-1"};
 const OFFSHAPE={"Arsenal":["4-4-2","front two screen, block mid"],"Man City":["4-4-2","Ndiaye tucks; rest-defense the watch"],"Liverpool":["4-2-4","man-jump press: wingers join Isak"],"Chelsea":["5-2-2-1","wing-backs drop; the two 10s trigger"],"Newcastle":["4-4-2","vertical press waves"],"Spurs":["4-4-2","first-pass press"],"Brighton":["4-4-2","feral coordinated jumps"],"Aston Villa":["4-4-2","mid-block, Emery traps"],"Nott'm Forest":["5-2-2-1","ambush block, springs long"],"Crystal Palace":["5-4-1","low block, Nketiah stays"],"Man Utd":["4-4-2","identity forming"],"Everton":["4-4-1-1","the chosen deep block"],"Brentford":["4-4-2","squeeze then drop"],"Leeds":["5-2-2-1","wing-backs drop, tens second wave — NOT the 5-4-1 disaster if it springs"],"Fulham":["4-4-2","new press, net pending"],"Bournemouth":["4-4-2","Rose waves installing"],"Sunderland":["4-4-2","over-station press"],"Ipswich Town":["4-5-1","organized mid-block"],"Coventry City":["4-5-1","survival block"],"Hull City":["5-4-1","the committed block"]};
@@ -2344,8 +2344,43 @@ function gateRing(r){
 async function loadScout(team){
   SCTEAM=team; SCSEL=null; SCSWAP={}; SCDRAWER=null; SCPHASE="on"; render();
   if(!PPROF[team]){ PPROF[team]=await api("player_profiles?team=eq."+encodeURIComponent(team)+"&select=*"); }
+  if(!LINEUP[team]){ try{ const r=await api("lineups?team=eq."+encodeURIComponent(team)+"&select=*"); LINEUP[team]=r[0]||null; }catch(e){ LINEUP[team]=null; } }
   if(!TPST[team]){ try{ const r=await api("team_profiles?season=eq.2026-27&select=team,stats"); for(const t of r)TPST[t.team]=t.stats||{}; }catch(e){} }
   render();
+}
+function normName(s){ return String(s||"").normalize("NFKD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z ]/g,"").trim(); }
+function profFor(team,name){
+  const n=normName(name), ln=n.split(" ").slice(-1)[0];
+  const ps=PPROF[team]||[];
+  return ps.find(p=>normName(p.player)===n||normName(p.fpl_name)===n)
+      || ps.find(p=>normName(p.player).split(" ").slice(-1)[0]===ln)
+      || null;
+}
+const LRANK={G:0,D:1,DM:2,M:3,AM:4,F:5};
+function posLine(pos){ if(pos==="GK")return "G"; if(pos.slice(0,2)==="DM")return "DM"; if(pos[0]==="D")return "D"; if(pos.slice(0,2)==="AM")return "AM"; if(pos[0]==="M")return "M"; if(pos[0]==="F")return "F"; return "M"; }
+function sideRank(pos){ if(/L$/.test(pos)&&!/CL$/.test(pos))return 0; if(/CL$/.test(pos))return 1; if(/CR$/.test(pos))return 3; if(/R$/.test(pos)&&!/CR$/.test(pos))return 4; return 2; }
+function lineupSlots(L){
+  const lines={G:[],D:[],DM:[],M:[],AM:[],F:[]};
+  (L.players||[]).forEach((p,idx)=>lines[posLine(p.pos)].push({...p,_idx:idx}));
+  const LX={G:38,D:112,DM:200,M:283,AM:365,F:470};
+  const slots=[];
+  for(const k of ["G","D","DM","M","AM","F"]){
+    const arr=lines[k]; if(!arr.length)continue;
+    arr.sort((a,b)=>sideRank(a.pos)-sideRank(b.pos)||a.order-b.order);
+    const ys=spreadY(arr.length);
+    arr.forEach((p,i)=>slots.push({x:LX[k],y:ys[i]+(k==="G"?0:0),p}));
+  }
+  return slots;
+}
+function fmtLabel(L){
+  const c={D:0,DM:0,M:0,AM:0,F:0};
+  (L.players||[]).forEach(p=>{const k=posLine(p.pos); if(k!=="G")c[k]++;});
+  const bands=[];
+  if(c.D)bands.push(c.D);
+  if(c.DM&&c.M)bands.push(c.DM+c.M); else if(c.DM)bands.push(c.DM); else if(c.M)bands.push(c.M);
+  if(c.AM)bands.push(c.AM);
+  if(c.F)bands.push(c.F);
+  return bands.join("-");
 }
 function nextFx(team){
   return (DB.plf||[]).filter(f=>!fxDone(f)&&(f.team_h_name===team||f.team_a_name===team)).sort((a,b)=>new Date(a.kickoff)-new Date(b.kickoff))[0];
@@ -2367,10 +2402,26 @@ function vPitch(){
   }
   const ps=PPROF[SCTEAM];
   if(!ps) return `<div class="panel"><p class="muted">Loading ${esc(SCTEAM)} squad…</p></div>`;
-  const onSh=ONSHAPE[SCTEAM]||"4-2-3-1";
+  const L=LINEUP[SCTEAM];
   const [offSh,offNote]=OFFSHAPE[SCTEAM]||["4-4-2",""];
+  const onSh=L?fmtLabel(L):(ONSHAPE[SCTEAM]||"4-2-3-1");
   const sh=SCPHASE==="on"?onSh:offSh;
-  const {xi,bench,slots}=buildXI(SCTEAM, sh);
+  let xi,bench,slots,verifiedXI=false;
+  if(L&&SCPHASE==="on"){
+    verifiedXI=true;
+    const ls=lineupSlots(L);
+    slots=ls.map(s=>({x:s.x,y:s.y}));
+    xi=ls.map(s=>{ const pr=profFor(SCTEAM,s.p.player);
+      return pr?{...pr, _lineupName:s.p.player, _pos:s.p.pos}:{team:SCTEAM,player:s.p.player,fpl_name:s.p.player,position:"?",_pos:s.p.pos,stats:{},strengths:[],weaknesses:["NO PROFILE — flagged to roster audit"],how_he_plays:"Started last match ("+s.p.pos+") but has no profile yet — the daily verifier flags this.",_lineupName:s.p.player}; });
+    const inXI=new Set(xi.map(x=>normName(x.player)));
+    bench=(PPROF[SCTEAM]||[]).filter(p=>!inXI.has(normName(p.player)));
+    for(const [i,name] of Object.entries(SCSWAP)){
+      const sub=(PPROF[SCTEAM]||[]).find(p=>p.player===name); const idx=+i;
+      if(sub&&xi[idx]){ const outp=xi[idx]; xi[idx]={...sub,_pos:outp._pos}; bench=bench.filter(b=>b.player!==sub.player); if(outp.player)bench.unshift(outp); }
+    }
+  } else {
+    const built=buildXI(SCTEAM, sh); xi=built.xi; bench=built.bench; slots=built.slots;
+  }
   const fx=nextFx(SCTEAM);
   const opp=fx?(fx.team_h_name===SCTEAM?fx.team_a_name:fx.team_h_name):null;
   const shares=ps.map(r=>[(((r.stats||{}).fpl||{}).xgi_share)||0,r.player]).sort((a,b)=>b[0]-a[0]).slice(0,3);
@@ -2380,12 +2431,13 @@ function vPitch(){
     const s=slots[i]||{x:280,y:110};
     const ring=gateRing(r)?`stroke="var(--accent)" stroke-width="3"`:(SCSEL===i?`stroke="var(--blue)" stroke-width="2.5"`:"");
     const prs=(((r.stats||{}).fpl||{}).prs)||"";
-    const nm=(r.fpl_name||r.player).split(" ").slice(-1)[0].slice(0,11);
+    const nm=((r._lineupName||r.fpl_name||r.player).split(" ").slice(-1)[0]).slice(0,11);
     const share=(((r.stats||{}).fpl||{}).xgi_share)||0;
     return `<g style="cursor:pointer" onclick="SCSEL=${i};SCTAB='profile';render()">
       <circle cx="${s.x}" cy="${s.y}" r="${gateRing(r)?13:11}" fill="${r.position==="GK"?"#f5e642":formCol(r)}" ${ring}/>
       <text x="${s.x}" y="${s.y+3.5}" font-size="10" font-weight="bold" text-anchor="middle" fill="#0b0f16">${prs}</text>
-      <text x="${s.x}" y="${s.y-17}" font-size="9.5" text-anchor="middle" fill="${gateRing(r)?"var(--accent)":"#c3ccda"}">${esc(nm)}${share>=0.28?" ⚠":""}</text></g>`;
+      <text x="${s.x}" y="${s.y-17}" font-size="9.5" text-anchor="middle" fill="${gateRing(r)?"var(--accent)":"#c3ccda"}">${esc(nm)}${share>=0.28?" ⚠":""}</text>
+      ${r._pos?`<text x="${s.x}" y="${s.y+24}" font-size="8" text-anchor="middle" fill="#4d6a85">${esc(r._pos)}</text>`:""}</g>`;
   }).join("");
   const drawer=(id,label,summary,body)=>`
     <div class="rowbtn" style="background:${SCDRAWER===id?"#1b2432":"var(--panel)"};border:1px solid ${SCDRAWER===id?"var(--accent)":"var(--border)"};border-radius:9px;padding:8px 10px;cursor:pointer" onclick="SCDRAWER=SCDRAWER==='${id}'?null:'${id}';render()">
@@ -2472,6 +2524,7 @@ function vPitch(){
       </span>
       ${fx?`<span class="small right" style="color:var(--muted)">next: ${esc(opp)} ${fx.team_h_name===SCTEAM?"(H)":"(A)"} · ${collision(SCTEAM,opp)}</span>`:""}
     </div>
+    ${SCPHASE==="on"?(verifiedXI?`<p class="small" style="margin:6px 0 0;color:#5d6879">XI = actual last lineup: vs ${esc(L.opp)} (${L.venue}) ${esc(String(L.match_date))} · positions from match tracking data · <span class="pos">verified</span></p>`:`<p class="small" style="margin:6px 0 0;color:var(--red)">⚠ no verified lineup stored — showing heuristic XI (flagged)</p>`):""}
     ${SCPHASE==="off"?`<p class="small" style="margin:6px 0 0;color:#5d6879">off-ball read: ${esc(offNote)} · curated from match study, not a feed</p>`:""}
   </div>
   <div class="grid" style="grid-template-columns:1.5fr 1fr;gap:10px;margin-top:10px;align-items:start">
