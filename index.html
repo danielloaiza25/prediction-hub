@@ -751,6 +751,30 @@ function vSimpleDashboard(){
       <div class="num" style="font-size:24px;font-weight:500;line-height:1.25">${plays.length}</div>
       <div class="small" style="color:#5d6879">${plays.filter(p=>isLogged(p)).length} logged · ${plays.filter(p=>p.locked).length} awaiting lineups</div></div>
   </div>
+  <div class="panel" style="border-left:3px solid var(--accent);border-radius:0 10px 10px 0;padding:10px 14px">
+    <div class="flex" style="gap:9px;align-items:center;flex-wrap:wrap">
+      <span class="small">This matchday I want to bet</span>
+      <span class="small muted">$</span><input id="alloc_bud" type="number" value="${ALLOCBUD||100}" style="width:76px;padding:5px 8px;text-align:right">
+      <button class="btn sm" onclick="ALLOCMODE='kelly';runAlloc()">distribute</button>
+      <span class="small" style="color:#5d6879">quarter-Kelly weights · YES picks only · combos half-weight · 40% cap per bet</span>
+    </div>
+    ${ALLOC?(ALLOC.legs.length?`
+    <div class="small" style="margin-top:8px">
+      ${ALLOC.legs.map(l=>`<div class="flex" style="padding:3px 0;gap:8px"><span style="flex:1">${l.kind==="combo"?'<span style="font-size:9.5px;background:rgba(167,139,250,.18);color:var(--purple);padding:1px 6px;border-radius:20px">COMBO</span> ':""}${esc(l.label)} <span class="muted">${esc(l.match)}</span></span><b class="num" style="color:var(--accent)">$${l.amt}</b></div>`).join("")}
+    </div>
+    <div class="flex small" style="gap:16px;margin-top:7px;border-top:1px solid var(--border);padding-top:7px;flex-wrap:wrap">
+      <span>allocated: <b>$${ALLOC.spend} of $${ALLOC.budget}</b></span>
+      <span>expected profit: <b class="pos">+$${ALLOC.ev.toFixed(2)}</b></span>
+      <span>all hit: <b>+$${ALLOC.maxWin.toFixed(0)}</b> · all miss: <b class="neg">−$${ALLOC.spend}</b></span>
+    </div>
+    ${ALLOC.underspend>=5&&ALLOCMODE==="kelly"?`<p class="small" style="margin:6px 0 0;color:var(--accent)">⚠ the math only wants $${ALLOC.spend} of your $${ALLOC.budget} — the edges do not justify more. Forcing the rest in raises risk, not expected profit.</p>`:""}
+    <div class="flex" style="gap:8px;margin-top:8px">
+      <button class="btn sm" onclick="allocFill()">fill all my-bet boxes</button>
+      ${ALLOC.underspend>=5&&ALLOCMODE==="kelly"?`<button class="btn ghost sm" onclick="allocSpendAll()">spend all $${ALLOC.budget} anyway (higher risk)</button>`:""}
+      ${ALLOCMODE==="all"?`<button class="btn ghost sm" onclick="ALLOCMODE='kelly';runAllocKeep()">back to safe split</button>`:""}
+    </div>`
+    :`<p class="small muted" style="margin:8px 0 0">${esc(ALLOC.note||"")}</p>`):""}
+  </div>
   <div class="panel" style="padding:0;overflow:hidden">
     <div class="flex" style="padding:13px 16px 8px"><h2 style="margin:0;font-size:16px">Plays this matchday</h2>
       <span class="small right" style="color:#5d6879">tap my call for the reasoning</span>
@@ -867,6 +891,57 @@ function vSimpleDashboard(){
   </div>
   `;
 }
+let ALLOC=null, ALLOCBUD=null, ALLOCMODE="kelly";
+function computeAlloc(budget, plays, combos){
+  const legs=[];
+  for(const p of plays){
+    if(p.our==null||p.locked)continue;
+    const v=verdictFor(p); if(!v.yes)continue;
+    const pr=p.our/100, c=p.maxPrice/100;
+    const kelly=Math.max(0,(pr-c)/(1-c))*0.25;
+    if(kelly<=0)continue;
+    legs.push({kind:"single",i:p._i,label:p.bet,match:p.match,mult:100/p.maxPrice,w:kelly,pr,c});
+  }
+  for(let ci=0;ci<(combos||[]).length;ci++){
+    const cb=combos[ci];
+    const legsArr=cb.legs.map(i=>(BOARD.plays||[])[i]).filter(Boolean);
+    const cv=comboVerdict(cb,legsArr); if(!cv.yes)continue;
+    const pr=cb.prob/100, price=cb.stake&&cb.payout?cb.stake/cb.payout:0.42;
+    const kelly=Math.max(0,(pr-price)/(1-price))*0.25*0.5;
+    if(kelly<=0)continue;
+    legs.push({kind:"combo",i:ci,label:legsArr.map(l=>l.bet).join(" + "),match:"combo",mult:cb.stake&&cb.payout?cb.payout/cb.stake:2.4,w:kelly,pr,c:price});
+  }
+  if(!legs.length)return {legs:[],spend:0,note:"No YES-verdict plays with positive edge right now — nothing worth allocating."};
+  const wsum=legs.reduce((a,l)=>a+l.w,0);
+  const kellySpend=Math.min(budget, budget*Math.min(1,wsum/0.12));
+  const spend=ALLOCMODE==="all"?budget:Math.min(budget, Math.round(kellySpend));
+  const cap=budget*0.4;
+  let alloc=legs.map(l=>({...l,amt:Math.min(cap, spend*l.w/wsum)}));
+  const over=alloc.reduce((a,l)=>a+l.amt,0);
+  if(over>0) alloc=alloc.map(l=>({...l,amt:Math.round(l.amt*(spend/over))}));
+  alloc=alloc.filter(l=>l.amt>=1);
+  const tot=alloc.reduce((a,l)=>a+l.amt,0);
+  const ev=alloc.reduce((a,l)=>a+l.amt*(l.pr*l.mult-1),0);
+  const maxWin=alloc.reduce((a,l)=>a+l.amt*(l.mult-1),0);
+  return {legs:alloc,spend:tot,ev,maxWin,budget,underspend:budget-tot};
+}
+function runAlloc(){
+  const b=+(document.getElementById("alloc_bud")||{}).value;
+  if(!b||b<=0){toast("Type your matchday budget first",false);return;}
+  ALLOCBUD=b;
+  ALLOC=computeAlloc(b,(BOARD&&BOARD.plays||[]).filter(p=>p.our!=null&&p.type!=="live"),(BOARD&&BOARD.suggested)||[]);
+  render();
+}
+function allocFill(){
+  if(!ALLOC)return;
+  for(const l of ALLOC.legs){
+    const el=document.getElementById((l.kind==="single"?"dv_":"cv_")+l.i);
+    if(el)el.value=l.amt;
+  }
+  toast("Suggested stakes filled — review, then log each");
+}
+function allocSpendAll(){ ALLOCMODE="all"; runAllocKeep(); }
+function runAllocKeep(){ if(!ALLOCBUD)return; ALLOC=computeAlloc(ALLOCBUD,(BOARD&&BOARD.plays||[]).filter(p=>p.our!=null&&p.type!=="live"),(BOARD&&BOARD.suggested)||[]); render(); }
 async function quickLogCombo(ci){
   const c=((BOARD&&BOARD.suggested)||[])[ci]; if(!c)return;
   const legs=c.legs.map(i=>(BOARD.plays||[])[i]).filter(Boolean);
