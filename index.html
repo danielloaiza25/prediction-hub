@@ -209,6 +209,9 @@ function abbr(n){ if(!n)return "";
   const w=String(n).replace(/[^A-Za-z ]/g,"").trim().split(/\s+/);
   return (w.length>1?(w[0][0]+w[1][0]+(w[1][1]||w[0][1]||"")):w[0].slice(0,3)).toUpperCase();
 }
+let MWVIEW=null;
+function mwNav(d){ const cur=(DB.plstate&&DB.plstate.current_gw)||1; if(MWVIEW==null)MWVIEW=cur; MWVIEW=Math.max(1,Math.min(38,MWVIEW+d)); render(); }
+function mwReset(){ MWVIEW=null; render(); }
 function fxDone(f){ return !!(f.finished||f.finished_provisional||(f.team_h_score!=null&&f.kickoff&&(Date.now()-new Date(f.kickoff).getTime())>9000000)); }
 function fxLive(f){ return !!(f.started&&!fxDone(f)); }
 function plBanner(){
@@ -218,7 +221,8 @@ function plBanner(){
   if(s.season_over){ numeral="38"; label="season complete"; sub=`all matchweeks played · ${esc(String(s.season))}`; }
   else if(seasonNotStarted(s)){ numeral="—"; label="season not started"; sub=s.first_kickoff?`first kickoff ${new Date(s.first_kickoff).toLocaleDateString([],{weekday:"short",month:"short",day:"numeric"})}`:`season ${esc(String(s.season))}`; }
   else { numeral=String(s.current_gw).padStart(2,"0"); label="matchweek of 38"; sub=`season ${esc(String(s.season))}`; }
-  const gw=s.current_gw;
+  const gw=(MWVIEW!=null?MWVIEW:s.current_gw);
+  if(MWVIEW!=null&&MWVIEW!==s.current_gw){ numeral=String(MWVIEW).padStart(2,"0"); label=MWVIEW<s.current_gw?"matchweek — played":"matchweek — upcoming"; }
   const fx=(DB.plf||[]).filter(f=>(+f.event||0)===+gw&&f.team_h_name&&f.team_a_name)
     .sort((a,b)=>new Date(a.kickoff)-new Date(b.kickoff));
   const chip=f=>{
@@ -239,9 +243,12 @@ function plBanner(){
   const shown=fx.slice(0,11), rest=fx.length-shown.length;
   return `<div class="panel" style="margin-top:0;padding:14px 16px">
     <div class="flex" style="align-items:center">
-      <div class="flex" style="gap:10px;align-items:baseline">
+      <div class="flex" style="gap:8px;align-items:center">
+        <button class="btn ghost sm" style="padding:3px 9px" onclick="mwNav(-1)">&#9664;</button>
         <span class="num" style="font-size:30px;font-weight:500;line-height:1">${numeral}</span>
-        <span><span class="small" style="color:var(--text);display:block">${label}</span>
+        <button class="btn ghost sm" style="padding:3px 9px" onclick="mwNav(1)">&#9654;</button>
+        ${MWVIEW!=null&&MWVIEW!==s.current_gw?`<button class="btn ghost sm" style="padding:3px 9px;color:var(--accent);border-color:var(--accent)" onclick="mwReset()">today</button>`:""}
+        <span style="margin-left:2px"><span class="small" style="color:var(--text);display:block">${label}</span>
         <span style="font-size:11.5px;color:#4d5766">${sub}</span></span>
       </div>
       <div class="right small" style="text-align:right;color:#4d5766">synced ${s.last_sync?new Date(s.last_sync).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):"—"}
