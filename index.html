@@ -2419,6 +2419,25 @@ function vPitch(){
       <div class="small" style="color:var(--blue);margin:2px 0 6px">TYPE: ${esc(ptype(sel))}</div>
       ${gateRing(sel)?`<div class="small" style="color:var(--red);margin-bottom:6px">⚠ ${((fpl.xgi_share||0)*100).toFixed(0)}% of team xGI${fpl.news?" · "+esc(String(fpl.news).slice(0,60)):""}</div>`:""}
       <p class="small" style="margin:0 0 6px;line-height:1.65">${esc(sel.how_he_plays||"")}</p>
+      ${(function(){const F=(sel.stats||{}).fifa; if(!F) return "";
+        const T=(k,lab)=>{const o=F[k]||{}; const r=o.r;
+          const col=r==null?"#3a4557":r>=70?"var(--green)":r>=40?"#8b97ab":"var(--red)";
+          return "<div style=\"background:#0b1119;border-radius:8px;padding:7px 4px;text-align:center\">"
+            +"<div style=\"font-size:10px;letter-spacing:.06em;color:#5d6879\">"+lab+"</div>"
+            +"<div class=\"num\" style=\"font-size:19px;font-weight:600;color:"+col+"\">"+(r==null?"&#8212;":r)+"</div></div>";};
+        const facts=(F.MIND&&F.MIND.facts)||{};
+        const subs=[];
+        if(F.SHO&&F.SHO.r!=null)subs.push("SHO: "+F.SHO.shots90+" shots/90, finishing "+(F.SHO.finish_delta>0?"+":"")+F.SHO.finish_delta+" vs xG");
+        if(F.CRE&&F.CRE.r!=null)subs.push("CRE: xA90 "+F.CRE.xA90+", KP90 "+F.CRE.KP90);
+        if(F.BUI&&F.BUI.r!=null)subs.push("BUI: build-up xG/90 "+F.BUI.xGBuildup90);
+        if(F.DEF&&F.DEF.r!=null)subs.push("DEF: "+F.DEF.dc90+" def-actions/90 (live, grows weekly)");
+        return `<div style="margin-top:8px">
+        <div class="grid" style="grid-template-columns:repeat(6,minmax(0,1fr));gap:5px">
+          ${T("PAC","PAC")}${T("SHO","SHO")}${T("CRE","CRE")}${T("BUI","BUI")}${T("DEF","DEF")}${T("PHY","PHY")}
+        </div>
+        <p class="small" style="margin:5px 0 0;color:#4d5766;font-size:10.5px;line-height:1.6">${subs.map(esc).join(" · ")}</p>
+        <p class="small" style="margin:3px 0 0;color:#4d5766;font-size:10.5px;line-height:1.6">Ratings = league percentiles from REAL event data (25-26 base; DEF live 26-27). <b>PAC & PHY: no data exists in our feeds — not measured, not guessed.</b> MENTALITY: not measurable${facts.penalty_duty?" · takes penalties":""}${facts.yellows!=null?" · "+facts.yellows+" yellows":""} — see scouting notes.</p>
+        </div>`; })()}
       ${meter("PRESSING",m.press,m.press>=60?"var(--green)":m.press<=35?"var(--red)":"#8b97ab")}
       ${meter("CREATION",m.creation,m.creation>=60?"var(--green)":"#8b97ab")}
       ${meter("DUELS",m.duels,"#8b97ab")}
