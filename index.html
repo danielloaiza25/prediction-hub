@@ -770,13 +770,16 @@ function vSimpleDashboard(){
     </div>
     ${ALLOC?(ALLOC.legs.length?`
     <div class="small" style="margin-top:8px">
-      ${ALLOC.legs.map(l=>`<div class="flex" style="padding:3px 0;gap:8px"><span style="flex:1">${l.kind==="combo"?'<span style="font-size:9.5px;background:rgba(167,139,250,.18);color:var(--purple);padding:1px 6px;border-radius:20px">COMBO</span> ':""}${esc(l.label)} <span class="muted">${esc(l.match)}</span></span><b class="num" style="color:${Math.round(l.pr*100)>=60?"var(--green)":"var(--muted)"};width:44px;text-align:right">${Math.round(l.pr*100)}%</b><b class="num" style="color:var(--accent);width:44px;text-align:right">$${l.amt}</b></div>`).join("")}
+      ${ALLOC.legs.map(l=>`<div class="flex" style="padding:3px 0;gap:8px"><span style="flex:1">${l.kind==="combo"?'<span style="font-size:9.5px;background:rgba(167,139,250,.18);color:var(--purple);padding:1px 6px;border-radius:20px">COMBO</span> ':""}${esc(l.label)} <span class="muted">${esc(l.match)}</span></span><b class="num" style="color:${Math.round(l.pr*100)>=60?"var(--green)":"var(--muted)"};width:44px;text-align:right">${Math.round(l.pr*100)}%</b>
+        <span class="flex" style="gap:3px;align-items:center;width:96px;justify-content:flex-end"><span class="muted small">$</span><input type="number" value="${l.amt}" onchange="allocPin('${allocKey(l)}',this.value)" style="width:56px;padding:3px 6px;text-align:right;${l.pinned?"border-color:var(--accent);color:var(--accent)":""}">${l.pinned?`<span class="rowbtn" style="cursor:pointer;color:var(--accent);font-size:11px" onclick="allocUnpin('${allocKey(l)}')" title="release">📌</span>`:""}</span></div>`).join("")}
     </div>
     <div class="flex small" style="gap:16px;margin-top:7px;border-top:1px solid var(--border);padding-top:7px;flex-wrap:wrap">
       <span>allocated: <b>$${ALLOC.spend} of $${ALLOC.budget}</b></span>
       <span>expected profit: <b class="pos">+$${ALLOC.ev.toFixed(2)}</b></span>
       <span>all hit: <b>+$${ALLOC.maxWin.toFixed(0)}</b> · all miss: <b class="neg">−$${ALLOC.spend}</b></span>
+      ${ALLOC.pinned?`<button class="btn ghost sm" style="padding:1px 9px" onclick="allocResetPins()">reset my edits</button>`:""}
     </div>
+    ${ALLOC.overBudget?`<p class="small" style="margin:5px 0 0;color:var(--red)">⚠ your pinned amounts exceed the $${ALLOC.budget} budget by $${ALLOC.overBudget} — everything else is at zero.</p>`:""}
     ${ALLOC.underspend>=5&&ALLOCMODE==="kelly"?`<p class="small" style="margin:6px 0 0;color:var(--accent)">⚠ the math only wants $${ALLOC.spend} of your $${ALLOC.budget} — the edges do not justify more. Forcing the rest in raises risk, not expected profit.</p>`:""}
     <div class="flex" style="gap:8px;margin-top:8px">
       <button class="btn sm" onclick="allocFill()">fill all my-bet boxes</button>
@@ -901,7 +904,14 @@ function vSimpleDashboard(){
   </div>
   `;
 }
-let ALLOC=null, ALLOCBUD=null, ALLOCMODE="kelly";
+let ALLOC=null, ALLOCBUD=null, ALLOCMODE="kelly", ALLOCPIN={};
+function allocKey(l){ return l.kind+"|"+l.i; }
+function allocPin(key,val){
+  const v=Math.max(0,Math.round(+val||0));
+  ALLOCPIN[key]=v; runAllocKeep();
+}
+function allocUnpin(key){ delete ALLOCPIN[key]; runAllocKeep(); }
+function allocResetPins(){ ALLOCPIN={}; runAllocKeep(); }
 function computeAlloc(budget, plays, combos){
   const legs=[];
   for(const p of plays){
@@ -926,16 +936,26 @@ function computeAlloc(budget, plays, combos){
   const kellySpend=Math.min(budget, budget*Math.min(1,wsum/0.12));
   const spend=ALLOCMODE==="all"?budget:Math.min(budget, Math.round(kellySpend));
   const cap=budget*0.4;
-  let alloc=legs.map(l=>({...l,amt:Math.min(cap, spend*l.w/wsum)}));
-  const over=alloc.reduce((a,l)=>a+l.amt,0);
-  if(over>0) alloc=alloc.map(l=>({...l,amt:Math.round(l.amt*(spend/over))}));
-  alloc=alloc.filter(l=>l.amt>=1);
+  const pinsTotal=legs.reduce((a,l)=>a+(ALLOCPIN[allocKey(l)]!=null?ALLOCPIN[allocKey(l)]:0),0);
+  const pool=Math.max(0, spend-pinsTotal);
+  const free=legs.filter(l=>ALLOCPIN[allocKey(l)]==null);
+  const fw=free.reduce((a,l)=>a+l.w,0);
+  let alloc=legs.map(l=>{
+    const k=allocKey(l);
+    if(ALLOCPIN[k]!=null) return {...l,amt:Math.min(ALLOCPIN[k],budget),pinned:true};
+    return {...l,amt:fw>0?Math.min(cap, pool*l.w/fw):0,pinned:false};
+  });
+  const freeSum=alloc.filter(l=>!l.pinned).reduce((a,l)=>a+l.amt,0);
+  if(freeSum>0){ const scale=pool/freeSum; alloc=alloc.map(l=>l.pinned?l:{...l,amt:Math.round(l.amt*scale)}); }
+  alloc=alloc.filter(l=>l.amt>=1||l.pinned);
   const tot=alloc.reduce((a,l)=>a+l.amt,0);
+  const overBudget=pinsTotal>budget?pinsTotal-budget:0;
   const ev=alloc.reduce((a,l)=>a+l.amt*(l.pr*l.mult-1),0);
   const maxWin=alloc.reduce((a,l)=>a+l.amt*(l.mult-1),0);
-  return {legs:alloc,spend:tot,ev,maxWin,budget,underspend:budget-tot};
+  return {legs:alloc,spend:tot,ev,maxWin,budget,underspend:budget-tot,overBudget,pinned:pinsTotal>0};
 }
 function runAlloc(){
+  ALLOCPIN={};
   const b=+(document.getElementById("alloc_bud")||{}).value;
   if(!b||b<=0){toast("Type your matchday budget first",false);return;}
   ALLOCBUD=b;
