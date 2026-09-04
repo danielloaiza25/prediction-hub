@@ -156,7 +156,7 @@ const GROUPS = [
   {id:"news",      label:"News",      tabs:[["news","Live feed & notes"]]},
   {id:"preds",     label:"Predictions", tabs:[["engine","Engine Picks"],["bankroll","Bankroll"]]},
   {id:"league",    label:"League",    tabs:[["pltable","Table & Team Profiles"]]},
-  {id:"squads",    label:"Scouting Report", tabs:[["scout","Pitch view"],["scouttext","Club notes"],["players","Players (PRS)"],["coaches","Coaches (TMS)"]]},
+  {id:"squads",    label:"Scouting Report", tabs:[["scout","Pitch view"],["players","Players (PRS)"],["coaches","Coaches (TMS)"]]},
   {id:"tools",     label:"Tools",     tabs:[["calculator","Calculator"],["data","Import / Export"],["predictions","Legacy archive"],["autopsies","Legacy autopsies"],["venues","Legacy venues (AIS)"]]},
 ];
 const LASTTAB={};
@@ -2343,6 +2343,15 @@ function vProfile(){
   return plBanner()+`
   <div class="flex" style="margin-bottom:4px">
     <button class="btn ghost sm" onclick="closeProfile()">← Table</button>
+    ${(()=>{const d=(DOSS||{})[team]; if(!d)return "";
+      const c=d.card||{}, rg=d.regime;
+      const line=(k,col,arr)=>(arr&&arr.length)?`<div class="small" style="margin:3px 0"><span style="color:${col};font-weight:700">${k}</span> · ${arr.slice(0,4).map(esc).join(" · ")}</div>`:"";
+      return `<div class="detail" style="margin-top:10px;border-left:3px solid var(--accent);border-radius:0 10px 10px 0">
+        <b class="small">Betting angles & dossier</b>
+        ${rg?`<div class="flex" style="gap:6px;flex-wrap:wrap;margin:5px 0 3px">${rg.manager?`<span class="tag pend">${esc(String(rg.manager).slice(0,44))}</span>`:""}${rg.shave?`<span class="tag miss">shave ${esc(String(rg.shave))}</span>`:""}${rg.uncertainty?`<span class="tag watch">uncertainty ${esc(String(rg.uncertainty).slice(0,30))}</span>`:""}</div>`:""}
+        ${line("back","var(--green)",c.back)}${line("fade","var(--red)",c.fade)}${line("never","var(--muted)",c.never)}${line("watch","var(--accent)",c.watch)}
+        ${d.deadline26?`<p class="small" style="margin:4px 0 0;color:#5d6879">window: ${esc(String(d.deadline26).slice(0,160))}</p>`:""}
+      </div>`;})()}
     <h2 style="color:var(--text);font-size:20px;font-weight:800">${esc(team)}</h2>
     <select class="right" onchange="setPlSeason(this.value)">${opts}</select>
   </div>
