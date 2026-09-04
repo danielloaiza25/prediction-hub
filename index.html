@@ -790,7 +790,7 @@ function vSimpleDashboard(){
   </div>
   <div class="panel" style="padding:0;overflow:hidden">
     <div class="flex" style="padding:13px 16px 8px"><h2 style="margin:0;font-size:16px">Plays this matchday</h2>
-      <span class="small right" style="color:#5d6879">tap my call for the reasoning</span>
+      <span class="small right" style="color:#5d6879">tap any ROW (or its YES/NO) → full reasoning</span>
       <button class="btn ghost sm" onclick="refreshBoard(true)">&#8635;</button></div>
     <div class="flex small" style="padding:5px 16px;border-bottom:1px solid var(--border);color:#5d6879;gap:6px">
       <span style="flex:1">play</span><span style="width:58px;text-align:right">hit</span>
@@ -807,7 +807,7 @@ function vSimpleDashboard(){
           params:(p._E&&p._E.params)||null,fixture_id:p.fid||null,kickoff:p.kick||null,season:(DB.plstate&&DB.plstate.season)||null});
         rows.push(`<div style="border-bottom:1px solid var(--border)">
           <div class="flex" style="padding:11px 16px;gap:6px;align-items:center">
-            <span style="flex:1;min-width:0;font-size:14.5px"><b>${esc(p.bet)}</b> <span class="muted" style="font-size:13px">${esc(p.match)}</span></span>
+            <span class="rowbtn" style="flex:1;min-width:0;font-size:14.5px;cursor:pointer" onclick="toggleWhy(${p._i})"><span style="color:var(--accent);font-size:11px;margin-right:6px">${DASHWHY===p._i?"▾":"▸"}</span><b>${esc(p.bet)}</b> <span class="muted" style="font-size:13px">${esc(p.match)}</span> <span style="font-size:10.5px;color:#4d5766">why?</span></span>
             <b class="num" style="width:58px;text-align:right;font-size:17px;color:${p.our>=60?"var(--green)":"inherit"}">${p.our}%</b>
             <span class="num" style="width:52px;text-align:right;color:var(--muted);font-size:13px">${multFromMax(p.maxPrice)}x</span>
             <span style="width:64px;text-align:center"><button onclick="toggleWhy(${p._i})" style="cursor:pointer;border:none;border-radius:20px;padding:3px 13px;font-size:12.5px;font-weight:500;background:${v.yes?"rgba(46,204,113,.16)":"rgba(231,76,91,.14)"};color:${v.yes?"var(--green)":"var(--red)"}">${v.yes?"YES":"NO"}</button></span>
@@ -837,8 +837,8 @@ function vSimpleDashboard(){
           params:null,season:(DB.plstate&&DB.plstate.season)||null});
         rows.push(`<div style="border-bottom:1px solid var(--border);border-left:3px solid var(--purple);background:rgba(167,139,250,.05)">
           <div class="flex" style="padding:11px 16px;gap:6px;align-items:center">
-            <span style="flex:1;min-width:0;font-size:14.5px">
-              <span style="font-size:10.5px;letter-spacing:.08em;background:rgba(167,139,250,.18);color:var(--purple);padding:2px 8px;border-radius:20px;margin-right:7px">COMBO ${legs.length} LEGS</span>
+            <span class="rowbtn" style="flex:1;min-width:0;font-size:14.5px;cursor:pointer" onclick="toggleWhy(${wid})">
+              <span style="color:var(--accent);font-size:11px;margin-right:4px">${DASHWHY===wid?"▾":"▸"}</span><span style="font-size:10.5px;letter-spacing:.08em;background:rgba(167,139,250,.18);color:var(--purple);padding:2px 8px;border-radius:20px;margin-right:7px">COMBO ${legs.length} LEGS</span>
               <b>${esc(name)}</b>
               <div class="muted" style="font-size:12px;margin-top:3px">${legs.map(p=>esc(p.match)).join(" · ")}${c.sameMatch?" · same match, correlation priced in":""}</div></span>
             <b class="num" style="width:58px;text-align:right;font-size:17px;color:var(--purple)">${c.prob}%</b>
