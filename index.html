@@ -770,7 +770,7 @@ function vSimpleDashboard(){
     </div>
     ${ALLOC?(ALLOC.legs.length?`
     <div class="small" style="margin-top:8px">
-      ${ALLOC.legs.map(l=>`<div class="flex" style="padding:3px 0;gap:8px"><span style="flex:1">${l.kind==="combo"?'<span style="font-size:9.5px;background:rgba(167,139,250,.18);color:var(--purple);padding:1px 6px;border-radius:20px">COMBO</span> ':""}${esc(l.label)} <span class="muted">${esc(l.match)}</span></span><b class="num" style="color:var(--accent)">$${l.amt}</b></div>`).join("")}
+      ${ALLOC.legs.map(l=>`<div class="flex" style="padding:3px 0;gap:8px"><span style="flex:1">${l.kind==="combo"?'<span style="font-size:9.5px;background:rgba(167,139,250,.18);color:var(--purple);padding:1px 6px;border-radius:20px">COMBO</span> ':""}${esc(l.label)} <span class="muted">${esc(l.match)}</span></span><b class="num" style="color:${Math.round(l.pr*100)>=60?"var(--green)":"var(--muted)"};width:44px;text-align:right">${Math.round(l.pr*100)}%</b><b class="num" style="color:var(--accent);width:44px;text-align:right">$${l.amt}</b></div>`).join("")}
     </div>
     <div class="flex small" style="gap:16px;margin-top:7px;border-top:1px solid var(--border);padding-top:7px;flex-wrap:wrap">
       <span>allocated: <b>$${ALLOC.spend} of $${ALLOC.budget}</b></span>
