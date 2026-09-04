@@ -155,9 +155,9 @@ const GROUPS = [
   {id:"dashboard", label:"Dashboard", tabs:[["dashboard","Dashboard"]]},
   {id:"news",      label:"News",      tabs:[["news","Live feed & notes"]]},
   {id:"preds",     label:"Predictions", tabs:[["engine","Engine Picks"],["bankroll","Bankroll"]]},
-  {id:"league",    label:"League",    tabs:[["pltable","Table & Team Profiles"],["fixtures","Matchweek detail"],["inplay","In-Play Card"],["venues","Venues (AIS)"]]},
+  {id:"league",    label:"League",    tabs:[["pltable","Table & Team Profiles"]]},
   {id:"squads",    label:"Scouting Report", tabs:[["scout","Pitch view"],["scouttext","Club notes"],["players","Players (PRS)"],["coaches","Coaches (TMS)"]]},
-  {id:"tools",     label:"Tools",     tabs:[["calculator","Calculator"],["data","Import / Export"],["predictions","Legacy archive"],["autopsies","Legacy autopsies"]]},
+  {id:"tools",     label:"Tools",     tabs:[["calculator","Calculator"],["data","Import / Export"],["predictions","Legacy archive"],["autopsies","Legacy autopsies"],["venues","Legacy venues (AIS)"]]},
 ];
 const LASTTAB={};
 const groupOf = t => GROUPS.find(g=>g.tabs.some(([k])=>k===t)) || GROUPS[0];
