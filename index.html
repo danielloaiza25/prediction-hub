@@ -691,6 +691,7 @@ function typeStats(){
     if(b.price_cents){S[k].ps+=b.price_cents;S[k].pn++;} }
   return S;
 }
+function typeRecTxt(x,withName){const S=typeStats();const m=String((x&&x.type)||x||"").toLowerCase();const k=m.indexOf("combo")>=0?"combo":m.indexOf("btts")>=0?"btts":(m.indexOf("over")>=0||m.indexOf("under")>=0||m.indexOf("goal")>=0)?"goals":"winner";const o=S[k];return o&&o.t?((withName?k+" ":"")+o.h+"-"+(o.t-o.h)):(withName?k+" \u2014":"\u2014");}
 function multFromPrice(c){ return (100/c).toFixed(2); }
 function vSimpleDashboard(){
   const boot=(()=>{
@@ -709,7 +710,7 @@ function vSimpleDashboard(){
   const _base=_fl.length?_fl.reduce((a,f)=>a+(f.kind==="withdrawal"?-+f.amount:+f.amount),0):(+((DB.settings||{}).bankroll)||1000);
   const bank=_base+pnl;
   const alerts=DB.players.filter(p=>p.prs>=8&&p.status&&p.status!=="fit"&&p.status!=="unavailable").slice(0,2);
-  const plays=(BOARD&&BOARD.plays||[]).filter(p=>p.our!=null&&p.type!=="live").sort((a,b)=>(b.ev??-99)-(a.ev??-99)).slice(0,10);
+  const plays=(BOARD&&BOARD.plays||[]).filter(p=>p.our!=null&&p.type!=="live").sort((a,b)=>(b.our??-1)-(a.our??-1)).slice(0,10);
   const isLogged=p=>open.some(b=>b.match===p.match&&b.side===p.bet);
   let cum=0; const pts=settled.slice().sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at))).map(b=>{cum+=((+b.payout||0)-(+b.stake||0));return cum;});
   const spark=(()=>{ if(pts.length<2)return "";
@@ -770,7 +771,7 @@ function vSimpleDashboard(){
     </div>
     ${ALLOC?(ALLOC.legs.length?`
     <div class="small" style="margin-top:8px">
-      ${ALLOC.legs.map(l=>`<div class="flex" style="padding:3px 0;gap:8px"><span style="flex:1">${l.kind==="combo"?'<span style="font-size:9.5px;background:rgba(167,139,250,.18);color:var(--purple);padding:1px 6px;border-radius:20px">COMBO</span> ':""}${esc(l.label)} <span class="muted">${esc(l.match)}</span></span><b class="num" style="color:${Math.round(l.pr*100)>=60?"var(--green)":"var(--muted)"};width:44px;text-align:right">${Math.round(l.pr*100)}%</b>
+      ${ALLOC.legs.map(l=>`<div class="flex" style="padding:3px 0;gap:8px"><span style="flex:1">${l.kind==="combo"?'<span style="font-size:9.5px;background:rgba(167,139,250,.18);color:var(--purple);padding:1px 6px;border-radius:20px">COMBO</span> ':""}${esc(l.label)} <span class="muted">${esc(l.match)}</span></span><span style="width:52px;text-align:right;flex:0 0 auto"><b class="num" style="color:${Math.round(l.pr*100)>=60?"var(--green)":"var(--muted)"}">${Math.round(l.pr*100)}%</b><div class="num" style="font-size:9.5px;color:#5d6879">${typeRecTxt(l.label,false)}</div></span>
         <span class="flex" style="gap:3px;align-items:center;width:96px;justify-content:flex-end"><span class="muted small">$</span><input type="number" value="${l.amt}" onchange="allocPin('${allocKey(l)}',this.value)" style="width:56px;padding:3px 6px;text-align:right;${l.pinned?"border-color:var(--accent);color:var(--accent)":""}">${l.pinned?`<span class="rowbtn" style="cursor:pointer;color:var(--accent);font-size:11px" onclick="allocUnpin('${allocKey(l)}')" title="release">📌</span>`:""}</span></div>`).join("")}
     </div>
     <div class="flex small" style="gap:16px;margin-top:7px;border-top:1px solid var(--border);padding-top:7px;flex-wrap:wrap">
@@ -792,8 +793,9 @@ function vSimpleDashboard(){
     <div class="flex" style="padding:13px 16px 8px"><h2 style="margin:0;font-size:16px">Plays this matchday</h2>
       <span class="small right" style="color:#5d6879">tap any ROW (or its YES/NO) → full reasoning</span>
       <button class="btn ghost sm" onclick="refreshBoard(true)">&#8635;</button></div>
+    <div class="small" style="padding:0 16px 7px;color:#5d6879">ordered by model probability, highest first \u00b7 small number = that bet type\u2019s graded record so far${TT?` (${TH}-${TT-TH} overall)`:""} \u2014 pool too small to rank by it yet</div>
     <div class="flex small" style="padding:5px 16px;border-bottom:1px solid var(--border);color:#5d6879;gap:6px">
-      <span style="flex:1">play</span><span style="width:58px;text-align:right">hit</span>
+      <span style="flex:1">play</span><span style="width:58px;text-align:right">prob</span>
       <span style="width:52px;text-align:right">odds</span><span style="width:64px;text-align:center">my call</span>
       <span style="width:196px;text-align:right">my bet</span></div>
     ${(()=>{
@@ -808,7 +810,7 @@ function vSimpleDashboard(){
         rows.push(`<div style="border-bottom:1px solid var(--border)">
           <div class="flex" style="padding:11px 16px;gap:6px;align-items:center">
             <span class="rowbtn" style="flex:1;min-width:0;font-size:14.5px;cursor:pointer" onclick="toggleWhy(${p._i})"><span style="color:var(--accent);font-size:11px;margin-right:6px">${DASHWHY===p._i?"▾":"▸"}</span><b>${esc(p.bet)}</b> <span class="muted" style="font-size:13px">${esc(p.match)}</span> <span style="font-size:10.5px;color:#4d5766">why?</span></span>
-            <b class="num" style="width:58px;text-align:right;font-size:17px;color:${p.our>=60?"var(--green)":"inherit"}">${p.our}%</b>
+            <span style="width:58px;text-align:right;flex:0 0 auto"><b class="num" style="font-size:17px;color:${p.our>=60?"var(--green)":"inherit"}">${p.our}%</b><div class="num" style="font-size:10px;color:#5d6879;white-space:nowrap">${typeRecTxt(p,true)}</div></span>
             <span class="num" style="width:52px;text-align:right;color:var(--muted);font-size:13px">${multFromMax(p.maxPrice)}x</span>
             <span style="width:64px;text-align:center"><button onclick="toggleWhy(${p._i})" style="cursor:pointer;border:none;border-radius:20px;padding:3px 13px;font-size:12.5px;font-weight:500;background:${v.yes?"rgba(46,204,113,.16)":"rgba(231,76,91,.14)"};color:${v.yes?"var(--green)":"var(--red)"}">${v.yes?"YES":"NO"}</button></span>
             ${lg?`<span style="width:196px;text-align:right;color:var(--green);font-size:13px">&#10003; logged</span>`
@@ -841,7 +843,7 @@ function vSimpleDashboard(){
               <span style="color:var(--accent);font-size:11px;margin-right:4px">${DASHWHY===wid?"▾":"▸"}</span><span style="font-size:10.5px;letter-spacing:.08em;background:rgba(167,139,250,.18);color:var(--purple);padding:2px 8px;border-radius:20px;margin-right:7px">COMBO ${legs.length} LEGS</span>
               <b>${esc(name)}</b>
               <div class="muted" style="font-size:12px;margin-top:3px">${legs.map(p=>esc(p.match)).join(" · ")}${c.sameMatch?" · same match, correlation priced in":""}</div></span>
-            <b class="num" style="width:58px;text-align:right;font-size:17px;color:var(--purple)">${c.prob}%</b>
+            <span style="width:58px;text-align:right;flex:0 0 auto"><b class="num" style="font-size:17px;color:var(--purple)">${c.prob}%</b><div class="num" style="font-size:10px;color:#5d6879;white-space:nowrap">${typeRecTxt("combo",true)}</div></span>
             <span class="num" style="width:52px;text-align:right;color:var(--muted);font-size:13px">${c.stake&&c.payout?(c.payout/c.stake).toFixed(2):"—"}x</span>
             <span style="width:64px;text-align:center"><button onclick="toggleWhy(${wid})" style="cursor:pointer;border:none;border-radius:20px;padding:3px 13px;font-size:12.5px;font-weight:500;background:${cv.yes?"rgba(46,204,113,.16)":"rgba(231,76,91,.14)"};color:${cv.yes?"var(--green)":"var(--red)"}">${cv.yes?"YES":"NO"}</button></span>
             <span style="width:196px;text-align:right;white-space:nowrap">
@@ -931,6 +933,7 @@ function computeAlloc(budget, plays, combos){
     if(kelly<=0)continue;
     legs.push({kind:"combo",i:ci,label:legsArr.map(l=>l.bet).join(" + "),match:"combo",mult:cb.stake&&cb.payout?cb.payout/cb.stake:2.4,w:kelly,pr,c:price});
   }
+  legs.sort((a,b)=>b.pr-a.pr);
   if(!legs.length)return {legs:[],spend:0,note:"No YES-verdict plays with positive edge right now — nothing worth allocating."};
   const wsum=legs.reduce((a,l)=>a+l.w,0);
   const kellySpend=Math.min(budget, budget*Math.min(1,wsum/0.12));
